@@ -137,6 +137,22 @@ The resolver:
 
 Network-level SSRF protection, DNS validation, redirect validation, and actual unsubscribe execution remain deferred to the later execution phase.
 
+## Unsubscribe execution model
+
+Phase 4B adds a separate security-critical execution layer.
+
+The execution layer:
+
+- accepts only session-owned sender-group identities from the browser and re-resolves current server-side operations from scan state
+- executes only explicitly supported automatic operations, currently RFC 8058 one-click HTTPS targets
+- performs DNS resolution and validates every resolved address before connecting
+- pins each outbound HTTPS request to a validated address so transport resolution cannot silently diverge from validation
+- revalidates redirect targets and enforces bounded redirects, strict timeouts, bounded response size, and bounded retries
+- never forwards Gmail credentials, browser cookies, browser authorization headers, or arbitrary browser-supplied request data
+- keeps idempotency and duplicate-execution guards in process-local memory only
+
+Normal HTTPS pages that require interaction, authentication, JavaScript, form discovery, cookies, or other unsupported flows remain manual.
+
 ## Runtime model
 
 The intended deployment model favors a traditional Node.js process or similar long-lived runtime because the v1 architecture depends on process-local ephemeral state.

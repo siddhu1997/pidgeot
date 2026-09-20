@@ -80,12 +80,13 @@ describe("unsubscribe resolver", () => {
       }),
     ]);
     expect(result.summary).toEqual({
-      mechanisms: [{
+      mechanisms: [expect.objectContaining({
         automatic: true,
+        id: expect.any(String),
         manualActionRequired: false,
         status: "AUTOMATIC",
         type: "RFC8058_ONE_CLICK",
-      }],
+      })],
       resolutionStatus: "AUTOMATIC",
     });
   });
@@ -270,12 +271,13 @@ describe("unsubscribe resolver", () => {
     ], first.state);
 
     expect(second.groups[0].unsubscribe).toEqual({
-      mechanisms: [{
+      mechanisms: [expect.objectContaining({
         automatic: true,
+        id: expect.any(String),
         manualActionRequired: false,
         status: "AUTOMATIC",
         type: "RFC8058_ONE_CLICK",
-      }],
+      })],
       resolutionStatus: "AUTOMATIC",
     });
   });

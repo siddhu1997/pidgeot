@@ -13,7 +13,7 @@ The project is designed around explicit user control and minimal retention:
 
 ## Current status
 
-Phase 4A unsubscribe-resolution infrastructure is now in place. The repository currently includes:
+Phase 4B safe unsubscribe-execution infrastructure is now in place. The repository currently includes:
 
 - a Next.js App Router scaffold in JavaScript
 - Tailwind CSS v4
@@ -25,8 +25,9 @@ Phase 4A unsubscribe-resolution infrastructure is now in place. The repository c
 - deterministic sender identity normalization and session-isolated sender grouping
 - deterministic sender classification and observable attention signals
 - deterministic unsubscribe mechanism resolution with safe browser summaries and no execution
+- safe RFC 8058 unsubscribe execution with server-only operation lookup and SSRF-aware transport controls
 
-The repository does not yet include unsubscribe execution, ephemeral snapshot restoration, or real-time cleanup queue processing.
+The repository does not yet include Gmail cleanup execution, ephemeral snapshot restoration, or real-time cleanup queue processing.
 
 ## What Pidgeot will do
 
@@ -36,7 +37,7 @@ When complete, Pidgeot will:
 - scan Gmail incrementally without loading the full mailbox into memory
 - build conservative sender groups
 - classify sender groups with deterministic local rules
-- resolve available unsubscribe mechanisms without executing them
+- resolve available unsubscribe mechanisms and safely submit supported one-click requests
 - explain why a sender was surfaced using deterministic signals only
 - let the user explicitly choose unsubscribe and "move unread to Trash"
 - stop processing when the active session disappears
@@ -142,8 +143,8 @@ Setup guidance:
 
 The specification for this app is intentionally phased. The next major implementation steps are:
 
-1. Phase 4B: unsubscribe execution.
-2. Phase 4C: cleanup queue and Trash operations.
+1. Phase 4C: cleanup queue and Trash operations.
+2. Later follow-up: richer unsubscribe UI and optional execution history if warranted.
 3. Later follow-up: ephemeral in-memory snapshot storage with TTL and account isolation.
 
 ## Routes available now
@@ -159,6 +160,7 @@ The specification for this app is intentionally phased. The next major implement
 - `/api/scan/status`: inspect derived scan state and counters
 - `/api/scan/pause`: pause the current scan cooperatively
 - `/api/scan/resume`: resume the current scan from its last checkpoint
+- `/api/unsubscribe/execute`: execute supported unsubscribe operations for one sender group by server-owned identity only
 
 ## Documentation set
 
@@ -172,6 +174,6 @@ The specification for this app is intentionally phased. The next major implement
 
 ## Notes
 
-The current UI still uses explicit placeholder data for the sender cards and queue preview. This is deliberate because Phase 4A adds the server-side unsubscribe-resolution foundation only; unsubscribe execution and cleanup UI are still later-phase work.
+The current UI still uses explicit placeholder data for the sender cards and queue preview. This is deliberate because Phase 4B adds the server-side unsubscribe execution foundation only; richer unsubscribe and cleanup UI are still later-phase work.
 
 Because the long-term session and snapshot model is process-local in v1, a server restart destroys active sessions and snapshots. That tradeoff is intentional and documented rather than silently replaced with persistent storage.

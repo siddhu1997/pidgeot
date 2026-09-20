@@ -4,6 +4,10 @@ import {
   DEFAULT_SCAN_METADATA_CONCURRENCY,
   DEFAULT_SCAN_PAGE_SIZE,
   DEFAULT_SESSION_TTL_HOURS,
+  DEFAULT_UNSUBSCRIBE_EXECUTION_CONCURRENCY,
+  DEFAULT_UNSUBSCRIBE_MAX_REDIRECTS,
+  DEFAULT_UNSUBSCRIBE_MAX_RESPONSE_BYTES,
+  DEFAULT_UNSUBSCRIBE_REQUEST_TIMEOUT_MS,
   getPublicAppConfig,
   getServerAppConfig,
   isAuthConfigured,
@@ -37,6 +41,10 @@ describe("getPublicAppConfig", () => {
     vi.stubEnv("SESSION_TTL_HOURS", "8");
     vi.stubEnv("SCAN_PAGE_SIZE", "40");
     vi.stubEnv("SCAN_METADATA_CONCURRENCY", "6");
+    vi.stubEnv("UNSUBSCRIBE_EXECUTION_CONCURRENCY", "3");
+    vi.stubEnv("UNSUBSCRIBE_MAX_REDIRECTS", "4");
+    vi.stubEnv("UNSUBSCRIBE_MAX_RESPONSE_BYTES", "2048");
+    vi.stubEnv("UNSUBSCRIBE_REQUEST_TIMEOUT_MS", "7000");
     vi.stubEnv("GOOGLE_CLIENT_ID", "client-id");
     vi.stubEnv("GOOGLE_CLIENT_SECRET", "client-secret");
     vi.stubEnv("GOOGLE_REDIRECT_URI", "https://app.pidgeot.test/api/auth/google/callback");
@@ -51,6 +59,10 @@ describe("getPublicAppConfig", () => {
       processingLeaseTtlSeconds: 120,
       scanMetadataConcurrency: 6,
       scanPageSize: 40,
+      unsubscribeExecutionConcurrency: 3,
+      unsubscribeMaxRedirects: 4,
+      unsubscribeMaxResponseBytes: 2048,
+      unsubscribeRequestTimeoutMs: 7000,
       googleClientId: "client-id",
       googleClientSecret: "client-secret",
       googleRedirectUri: "https://app.pidgeot.test/api/auth/google/callback",
@@ -69,5 +81,9 @@ describe("getPublicAppConfig", () => {
 
     expect(getServerAppConfig().scanPageSize).toBe(DEFAULT_SCAN_PAGE_SIZE);
     expect(getServerAppConfig().scanMetadataConcurrency).toBe(DEFAULT_SCAN_METADATA_CONCURRENCY);
+    expect(getServerAppConfig().unsubscribeExecutionConcurrency).toBe(DEFAULT_UNSUBSCRIBE_EXECUTION_CONCURRENCY);
+    expect(getServerAppConfig().unsubscribeMaxRedirects).toBe(DEFAULT_UNSUBSCRIBE_MAX_REDIRECTS);
+    expect(getServerAppConfig().unsubscribeMaxResponseBytes).toBe(DEFAULT_UNSUBSCRIBE_MAX_RESPONSE_BYTES);
+    expect(getServerAppConfig().unsubscribeRequestTimeoutMs).toBe(DEFAULT_UNSUBSCRIBE_REQUEST_TIMEOUT_MS);
   });
 });
