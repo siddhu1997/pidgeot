@@ -13,7 +13,7 @@ The project is designed around explicit user control and minimal retention:
 
 ## Current status
 
-Phase 3B classification infrastructure is now in place. The repository currently includes:
+Phase 4A unsubscribe-resolution infrastructure is now in place. The repository currently includes:
 
 - a Next.js App Router scaffold in JavaScript
 - Tailwind CSS v4
@@ -24,6 +24,7 @@ Phase 3B classification infrastructure is now in place. The repository currently
 - a process-local incremental Gmail scanner with metadata-only retrieval and pause/resume checkpoints
 - deterministic sender identity normalization and session-isolated sender grouping
 - deterministic sender classification and observable attention signals
+- deterministic unsubscribe mechanism resolution with safe browser summaries and no execution
 
 The repository does not yet include unsubscribe execution, ephemeral snapshot restoration, or real-time cleanup queue processing.
 
@@ -35,6 +36,7 @@ When complete, Pidgeot will:
 - scan Gmail incrementally without loading the full mailbox into memory
 - build conservative sender groups
 - classify sender groups with deterministic local rules
+- resolve available unsubscribe mechanisms without executing them
 - explain why a sender was surfaced using deterministic signals only
 - let the user explicitly choose unsubscribe and "move unread to Trash"
 - stop processing when the active session disappears
@@ -140,8 +142,8 @@ Setup guidance:
 
 The specification for this app is intentionally phased. The next major implementation steps are:
 
-1. Phase 3C: unsubscribe detection and execution.
-2. Phase 3D: cleanup queue and Trash operations.
+1. Phase 4B: unsubscribe execution.
+2. Phase 4C: cleanup queue and Trash operations.
 3. Later follow-up: ephemeral in-memory snapshot storage with TTL and account isolation.
 
 ## Routes available now
@@ -170,6 +172,6 @@ The specification for this app is intentionally phased. The next major implement
 
 ## Notes
 
-The current UI still uses explicit placeholder data for the sender cards and queue preview. This is deliberate because Phase 3B adds the server-side classification foundation only; unsubscribe and cleanup UI are still later-phase work.
+The current UI still uses explicit placeholder data for the sender cards and queue preview. This is deliberate because Phase 4A adds the server-side unsubscribe-resolution foundation only; unsubscribe execution and cleanup UI are still later-phase work.
 
 Because the long-term session and snapshot model is process-local in v1, a server restart destroys active sessions and snapshots. That tradeoff is intentional and documented rather than silently replaced with persistent storage.

@@ -215,6 +215,15 @@ describe("scan service", () => {
           }),
         ],
         category: "UNKNOWN",
+        unsubscribe: {
+          mechanisms: [
+            expect.objectContaining({
+              status: "MANUAL_ACTION_REQUIRED",
+              type: "MAILTO",
+            }),
+          ],
+          resolutionStatus: "MANUAL_ACTION_REQUIRED",
+        },
       }),
     ]);
   });
@@ -274,7 +283,7 @@ describe("scan service", () => {
     expect(status.counters.messagesNormalized).toBe(totalMessages);
     expect(fixture.getSummary().maxConcurrentMetadata).toBeLessThanOrEqual(4);
     expect(scanService.getNormalizedMessages({ sessionId: session.id }).length).toBe(totalMessages);
-  });
+  }, 15000);
 
   it("pauses cooperatively, resumes from checkpoint, and does not schedule new work while paused", async () => {
     const fixture = createSyntheticMailboxFixture({

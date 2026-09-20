@@ -134,6 +134,19 @@ describe("sender grouper", () => {
 
     expect(groups[0]).toEqual(expect.objectContaining({
       senderDomains: ["updates.example.com"],
+      unsubscribe: {
+        mechanisms: [
+          expect.objectContaining({
+            status: "MANUAL_ACTION_REQUIRED",
+            type: "HTTPS_LINK",
+          }),
+          expect.objectContaining({
+            status: "MANUAL_ACTION_REQUIRED",
+            type: "MAILTO",
+          }),
+        ],
+        resolutionStatus: "MANUAL_ACTION_REQUIRED",
+      },
       unsubscribeServiceDomains: ["sendgrid.net", "u123.sendgrid.net"],
     }));
   });
@@ -226,11 +239,19 @@ describe("sender grouper", () => {
     expect(groups.find((group) => group.representativeAddress === "fallback@example.com")).toEqual(
       expect.objectContaining({
         groupingSignals: expect.arrayContaining([{ type: "SENDER_HEADER_FALLBACK" }]),
+        unsubscribe: {
+          mechanisms: [],
+          resolutionStatus: "UNAVAILABLE",
+        },
       }),
     );
     expect(groups.find((group) => group.representativeAddress === null)).toEqual(
       expect.objectContaining({
         messageCount: 2,
+        unsubscribe: {
+          mechanisms: [],
+          resolutionStatus: "UNAVAILABLE",
+        },
       }),
     );
   });

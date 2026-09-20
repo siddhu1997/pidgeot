@@ -88,6 +88,10 @@ describe("scan store", () => {
               }),
             ],
             messageCount: 2,
+            unsubscribe: {
+              mechanisms: [],
+              resolutionStatus: "UNAVAILABLE",
+            },
             unreadCount: 1,
           }),
         ],
@@ -166,6 +170,10 @@ describe("scan store", () => {
         category: "UNKNOWN",
         messageCount: 1,
         representativeAddress: "one@example.com",
+        unsubscribe: {
+          mechanisms: [],
+          resolutionStatus: "UNAVAILABLE",
+        },
       }),
     ]);
   });

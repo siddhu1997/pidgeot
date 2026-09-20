@@ -49,6 +49,6 @@ Quick Tunnels are acceptable for temporary development but should not be treated
 ## Current limitations
 
 - Gmail scanning is process-local and request-driven in Phase 2B; it is not backed by durable storage or workers.
-- Sender grouping and classification are process-local and derived from scan results in Phase 3A and Phase 3B.
-- Cleanup and unsubscribe are not yet implemented.
+- Sender grouping, classification, and unsubscribe-mechanism resolution are process-local and derived from scan results in Phase 3A, Phase 3B, and Phase 4A.
+- Cleanup and unsubscribe execution are not yet implemented.
 - Process-local state means auth and scan state are not designed for horizontal scaling in v1.

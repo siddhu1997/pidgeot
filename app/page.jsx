@@ -65,20 +65,20 @@ export default async function Home() {
         <header className="grid gap-4 rounded-[28px] border border-white/12 bg-[rgba(7,11,19,0.84)] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.35)] backdrop-blur md:grid-cols-[1.5fr_1fr] md:p-7">
           <div className="space-y-5">
             <div className="inline-flex items-center gap-2 rounded-full border border-cyan-300/30 bg-cyan-300/10 px-3 py-1 font-mono text-xs uppercase tracking-[0.28em] text-cyan-100">
-              Phase 3B foundation
+              Phase 4A foundation
             </div>
             <div className="space-y-3">
               <p className="font-mono text-xs uppercase tracking-[0.32em] text-slate-400">
                 Privacy-first Gmail cleanup
               </p>
               <h1 className="max-w-3xl text-4xl leading-none font-semibold tracking-[-0.05em] text-white sm:text-6xl">
-                Pidgeot now has the Gmail scanner and classification foundations, not the cleanup engine yet.
+                Pidgeot now has the Gmail scanner, classification, and unsubscribe-resolution foundations, not the cleanup engine yet.
               </h1>
               <p className="max-w-2xl text-base leading-7 text-slate-300 sm:text-lg">
-                This phase adds deterministic sender classification on top of the server-side
-                incremental scanner, metadata-only Gmail retrieval, and process-local scan
-                checkpoints for a mailbox cleaner that stays deterministic, explicit, and temporary
-                by design.
+                This phase adds deterministic unsubscribe mechanism resolution on top of the
+                server-side incremental scanner, metadata-only Gmail retrieval, sender grouping,
+                and local classification for a mailbox cleaner that stays deterministic, explicit,
+                and temporary by design.
               </p>
             </div>
             <div className="flex flex-wrap gap-3">
@@ -167,9 +167,9 @@ export default async function Home() {
                 Delivery note
               </p>
               <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-200">
-                Phase 3B keeps the UI as a marked product preview. The counters and sender groups
-                below are still mock data while unsubscribe and cleanup are staged behind later
-                application flows.
+                Phase 4A keeps the UI as a marked product preview. The counters and sender groups
+                below are still mock data while unsubscribe execution and cleanup are staged behind
+                later application flows.
               </p>
             </div>
 

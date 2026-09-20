@@ -123,6 +123,20 @@ The classifier:
 
 Classification is recomputed from the latest sender-group aggregate state whenever scan summaries are sanitized, so chunk boundaries and message order do not change the result.
 
+## Unsubscribe resolution model
+
+Phase 4A adds a deterministic unsubscribe-resolution layer on top of sender-group evidence.
+
+The resolver:
+
+- parses `List-Unsubscribe` and `List-Unsubscribe-Post` observations already captured from normalized Gmail metadata
+- resolves RFC 8058 one-click HTTPS targets separately from normal HTTPS pages and `mailto:` operations
+- rejects unsafe or unsupported targets syntactically without performing DNS lookups or network requests
+- deduplicates identical operations conservatively while preserving distinct mechanisms
+- exposes only sanitized mechanism summaries in browser-facing scan state while keeping raw operational targets server-side
+
+Network-level SSRF protection, DNS validation, redirect validation, and actual unsubscribe execution remain deferred to the later execution phase.
+
 ## Runtime model
 
 The intended deployment model favors a traditional Node.js process or similar long-lived runtime because the v1 architecture depends on process-local ephemeral state.
