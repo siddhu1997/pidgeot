@@ -7,7 +7,8 @@ const rootDir = fileURLToPath(new URL(".", import.meta.url));
 
 export default defineConfig({
   esbuild: {
-    include: /.*\.js$/,
+    include: /.*\.[jt]sx?$/,
+    jsx: "automatic",
     loader: "jsx",
   },
   resolve: {
