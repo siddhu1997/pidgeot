@@ -22,8 +22,28 @@ describe("scan store", () => {
     scanStore.commitSourcePageProgress(scan.id, {
       metadataFailures: 0,
       normalizedMessages: [
-        { id: "a-1", source: SCAN_SOURCES.ACTIVE_MAIL },
-        { id: "a-2", source: SCAN_SOURCES.ACTIVE_MAIL },
+        {
+          headers: {
+            from: "Alerts <alerts@example.com>",
+            listId: null,
+            listUnsubscribe: null,
+            sender: null,
+          },
+          id: "a-1",
+          labelIds: ["UNREAD"],
+          source: SCAN_SOURCES.ACTIVE_MAIL,
+        },
+        {
+          headers: {
+            from: "Alerts <alerts@example.com>",
+            listId: null,
+            listUnsubscribe: null,
+            sender: null,
+          },
+          id: "a-2",
+          labelIds: [],
+          source: SCAN_SOURCES.ACTIVE_MAIL,
+        },
       ],
       remainingPendingMessageIds: [],
       source: SCAN_SOURCES.ACTIVE_MAIL,
@@ -52,6 +72,18 @@ describe("scan store", () => {
         }),
         partialResultsAvailable: true,
         pauseReason: SCAN_PAUSE_REASONS.USER_REQUESTED,
+        senderGroups: [
+          expect.objectContaining({
+            activeCount: 2,
+            addresses: [
+              expect.objectContaining({
+                canonicalAddress: "alerts@example.com",
+              }),
+            ],
+            messageCount: 2,
+            unreadCount: 1,
+          }),
+        ],
         sourceSummaries: expect.objectContaining({
           ACTIVE_MAIL: expect.objectContaining({
             pagesProcessed: 1,
@@ -84,7 +116,17 @@ describe("scan store", () => {
     });
     scanStore.commitSourcePageProgress(scan.id, {
       metadataFailures: 0,
-      normalizedMessages: [{ id: "dup-1", source: SCAN_SOURCES.ACTIVE_MAIL }],
+      normalizedMessages: [{
+        headers: {
+          from: "One <one@example.com>",
+          listId: null,
+          listUnsubscribe: null,
+          sender: null,
+        },
+        id: "dup-1",
+        labelIds: [],
+        source: SCAN_SOURCES.ACTIVE_MAIL,
+      }],
       remainingPendingMessageIds: [],
       source: SCAN_SOURCES.ACTIVE_MAIL,
     });
@@ -98,8 +140,24 @@ describe("scan store", () => {
     expect(storedScan.sources.TRASH.pendingMessageIds).toEqual([]);
     expect(storedScan.counters.duplicateMessageIds).toBe(1);
     expect(scanStore.listNormalizedMessagesForSession("session-1")).toEqual([
-      { id: "dup-1", source: SCAN_SOURCES.ACTIVE_MAIL },
+      {
+        headers: {
+          from: "One <one@example.com>",
+          listId: null,
+          listUnsubscribe: null,
+          sender: null,
+        },
+        id: "dup-1",
+        labelIds: [],
+        source: SCAN_SOURCES.ACTIVE_MAIL,
+      },
     ]);
     expect(scanStore.getSanitizedScanForSession("session-1")).not.toHaveProperty("normalizedMessagesById");
+    expect(scanStore.getSanitizedScanForSession("session-1").senderGroups).toEqual([
+      expect.objectContaining({
+        messageCount: 1,
+        representativeAddress: "one@example.com",
+      }),
+    ]);
   });
 });

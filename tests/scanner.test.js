@@ -59,10 +59,26 @@ function createSyntheticMailboxFixture({
             internalDate: "1700000000000",
             labelIds: messageId.startsWith("trash") ? ["TRASH"] : ["INBOX"],
             payload: {
-              headers: headers.map((headerName) => ({
-                name: headerName,
-                value: `${headerName}-value-${messageId}`,
-              })),
+              headers: headers.map((headerName) => {
+                if (headerName === "From") {
+                  return {
+                    name: headerName,
+                    value: `Sender ${messageId} <sender-${messageId}@example.com>`,
+                  };
+                }
+
+                if (headerName === "List-Unsubscribe") {
+                  return {
+                    name: headerName,
+                    value: `<mailto:leave-${messageId}@mailservice.example>`,
+                  };
+                }
+
+                return {
+                  name: headerName,
+                  value: `${headerName}-value-${messageId}`,
+                };
+              }),
             },
             snippet: "should-not-leak",
             threadId: `thread-${messageId}`,
@@ -154,8 +170,8 @@ describe("scan service", () => {
     expect(normalizedMessages[0]).toEqual(
       expect.objectContaining({
         headers: expect.objectContaining({
-          from: "From-value-active-1",
-          listUnsubscribe: "List-Unsubscribe-value-active-1",
+          from: "Sender active-1 <sender-active-1@example.com>",
+          listUnsubscribe: "<mailto:leave-active-1@mailservice.example>",
           subject: "Subject-value-active-1",
         }),
         id: "active-1",
@@ -190,6 +206,15 @@ describe("scan service", () => {
     expect(scanService.getScanStatus({ session })).not.toHaveProperty("snippet");
     expect(scanService.getScanStatus({ session })).not.toHaveProperty("payload");
     expect(scanService.getNormalizedMessages({ sessionId: session.id })[0]).not.toHaveProperty("payload");
+    expect(scanService.getScanStatus({ session }).senderGroups).toEqual([
+      expect.objectContaining({
+        addresses: [
+          expect.objectContaining({
+            canonicalAddress: "sender-active-1@example.com",
+          }),
+        ],
+      }),
+    ]);
   });
 
   it("deduplicates repeated Gmail ids across overlapping pages and sources", async () => {
