@@ -75,9 +75,16 @@ describe("scan store", () => {
         senderGroups: [
           expect.objectContaining({
             activeCount: 2,
+            attention: "LOW",
             addresses: [
               expect.objectContaining({
                 canonicalAddress: "alerts@example.com",
+              }),
+            ],
+            category: "UNKNOWN",
+            classificationSignals: [
+              expect.objectContaining({
+                type: "INSUFFICIENT_CLASSIFICATION_EVIDENCE",
               }),
             ],
             messageCount: 2,
@@ -155,6 +162,8 @@ describe("scan store", () => {
     expect(scanStore.getSanitizedScanForSession("session-1")).not.toHaveProperty("normalizedMessagesById");
     expect(scanStore.getSanitizedScanForSession("session-1").senderGroups).toEqual([
       expect.objectContaining({
+        attention: "LOW",
+        category: "UNKNOWN",
         messageCount: 1,
         representativeAddress: "one@example.com",
       }),

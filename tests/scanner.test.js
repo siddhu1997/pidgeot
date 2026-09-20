@@ -208,11 +208,13 @@ describe("scan service", () => {
     expect(scanService.getNormalizedMessages({ sessionId: session.id })[0]).not.toHaveProperty("payload");
     expect(scanService.getScanStatus({ session }).senderGroups).toEqual([
       expect.objectContaining({
+        attention: "LOW",
         addresses: [
           expect.objectContaining({
             canonicalAddress: "sender-active-1@example.com",
           }),
         ],
+        category: "UNKNOWN",
       }),
     ]);
   });
