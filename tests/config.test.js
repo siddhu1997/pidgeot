@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  DEFAULT_CLEANUP_MUTATION_CONCURRENCY,
   DEFAULT_SCAN_METADATA_CONCURRENCY,
   DEFAULT_SCAN_PAGE_SIZE,
   DEFAULT_SESSION_TTL_HOURS,
@@ -41,6 +42,7 @@ describe("getPublicAppConfig", () => {
     vi.stubEnv("SESSION_TTL_HOURS", "8");
     vi.stubEnv("SCAN_PAGE_SIZE", "40");
     vi.stubEnv("SCAN_METADATA_CONCURRENCY", "6");
+    vi.stubEnv("CLEANUP_MUTATION_CONCURRENCY", "4");
     vi.stubEnv("UNSUBSCRIBE_EXECUTION_CONCURRENCY", "3");
     vi.stubEnv("UNSUBSCRIBE_MAX_REDIRECTS", "4");
     vi.stubEnv("UNSUBSCRIBE_MAX_RESPONSE_BYTES", "2048");
@@ -57,6 +59,7 @@ describe("getPublicAppConfig", () => {
       sessionSecret: "super-secret",
       sessionTtlHours: 8,
       processingLeaseTtlSeconds: 120,
+      cleanupMutationConcurrency: 4,
       scanMetadataConcurrency: 6,
       scanPageSize: 40,
       unsubscribeExecutionConcurrency: 3,
@@ -81,6 +84,7 @@ describe("getPublicAppConfig", () => {
 
     expect(getServerAppConfig().scanPageSize).toBe(DEFAULT_SCAN_PAGE_SIZE);
     expect(getServerAppConfig().scanMetadataConcurrency).toBe(DEFAULT_SCAN_METADATA_CONCURRENCY);
+    expect(getServerAppConfig().cleanupMutationConcurrency).toBe(DEFAULT_CLEANUP_MUTATION_CONCURRENCY);
     expect(getServerAppConfig().unsubscribeExecutionConcurrency).toBe(DEFAULT_UNSUBSCRIBE_EXECUTION_CONCURRENCY);
     expect(getServerAppConfig().unsubscribeMaxRedirects).toBe(DEFAULT_UNSUBSCRIBE_MAX_REDIRECTS);
     expect(getServerAppConfig().unsubscribeMaxResponseBytes).toBe(DEFAULT_UNSUBSCRIBE_MAX_RESPONSE_BYTES);

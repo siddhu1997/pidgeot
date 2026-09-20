@@ -21,8 +21,8 @@ describe("gmail client foundation", () => {
 
     expect(gmailClient).toHaveProperty("getMessageMetadata");
     expect(gmailClient).toHaveProperty("listMessagePage");
+    expect(gmailClient).toHaveProperty("trashMessage");
     expect(gmailClient).not.toHaveProperty("getMessageFull");
-    expect(gmailClient).not.toHaveProperty("trashMessage");
   });
 
   it("lists bounded pages using server-side Gmail credentials only", async () => {
@@ -207,5 +207,48 @@ describe("gmail client foundation", () => {
       userId: session.id,
     });
     expect(retryPolicy.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("moves a message to Gmail Trash using the existing credential and lease boundary", async () => {
+    const sessionStore = createActiveSessionStore();
+    const processingLeaseStore = createProcessingLeaseStore({ ttlMs: 1000 });
+    const session = sessionStore.createSession({
+      accountKey: "account-key",
+      email: "user@example.com",
+      gmail: createGmailReadyState({
+        accessToken: "token-a",
+        accessTokenExpiresAt: Date.now() + 10 * 60 * 1000,
+        grantedScopes: ["scope-a"],
+        refreshToken: "refresh-a",
+      }),
+      googleSubject: "subject-a",
+    });
+    const lease = processingLeaseStore.acquireLease({ sessionId: session.id });
+    const fetchImpl = vi.fn().mockResolvedValue({
+      json: async () => ({ id: "message-1", labelIds: ["TRASH", "UNREAD"] }),
+      ok: true,
+    });
+    const gmailClient = createGmailClient({
+      config: {},
+      fetchImpl,
+      oauthClientFactory: vi.fn(),
+      processingLeaseStore,
+      sessionStore,
+    });
+
+    const result = await gmailClient.trashMessage({
+      leaseId: lease.id,
+      messageId: "message-1",
+      sessionId: session.id,
+    });
+
+    expect(result).toEqual({ id: "message-1", labelIds: ["TRASH", "UNREAD"] });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      expect.stringContaining("/messages/message-1/trash"),
+      expect.objectContaining({
+        method: "POST",
+      }),
+    );
+    expect(fetchImpl.mock.calls[0][1].headers.Authorization).toBe("Bearer token-a");
   });
 });

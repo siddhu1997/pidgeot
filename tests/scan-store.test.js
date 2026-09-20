@@ -177,4 +177,103 @@ describe("scan store", () => {
       }),
     ]);
   });
+
+  it("derives cleanup eligibility from unread active messages only and updates grouping after successful trash mutations", () => {
+    const scanStore = createScanStore({ now: () => 3000 });
+    const scan = scanStore.createSessionScan({
+      accountKey: "account-key",
+      leaseId: "lease-1",
+      metadataConcurrency: 5,
+      pageSize: 50,
+      sessionId: "session-1",
+    });
+
+    scanStore.beginSourcePage(scan.id, {
+      messageRefs: [{ id: "a-1" }, { id: "a-2" }, { id: "a-3" }, { id: "t-1" }],
+      nextPageToken: null,
+      source: SCAN_SOURCES.ACTIVE_MAIL,
+    });
+    scanStore.commitSourcePageProgress(scan.id, {
+      metadataFailures: 0,
+      normalizedMessages: [
+        {
+          headers: { from: "Alerts <alerts@example.com>", listId: null, listUnsubscribe: null, sender: null },
+          id: "a-1",
+          labelIds: ["UNREAD", "INBOX"],
+          source: SCAN_SOURCES.ACTIVE_MAIL,
+        },
+        {
+          headers: { from: "Alerts <alerts@example.com>", listId: null, listUnsubscribe: null, sender: null },
+          id: "a-2",
+          labelIds: ["INBOX"],
+          source: SCAN_SOURCES.ACTIVE_MAIL,
+        },
+        {
+          headers: { from: "Receipts <receipts@example.com>", listId: null, listUnsubscribe: null, sender: null },
+          id: "a-3",
+          labelIds: ["UNREAD", "INBOX"],
+          source: SCAN_SOURCES.ACTIVE_MAIL,
+        },
+        {
+          headers: { from: "Alerts <alerts@example.com>", listId: null, listUnsubscribe: null, sender: null },
+          id: "t-1",
+          labelIds: ["UNREAD", "TRASH"],
+          source: SCAN_SOURCES.TRASH,
+        },
+      ],
+      remainingPendingMessageIds: [],
+      source: SCAN_SOURCES.ACTIVE_MAIL,
+    });
+
+    const alertsGroup = scanStore.getSanitizedScanForSession("session-1").senderGroups.find((group) => group.representativeAddress === "alerts@example.com");
+    const receiptsGroup = scanStore.getSanitizedScanForSession("session-1").senderGroups.find((group) => group.representativeAddress === "receipts@example.com");
+
+    expect(scanStore.getSenderGroupCleanupContextForSession("session-1", alertsGroup.id)).toEqual({
+      eligibleMessageIds: ["a-1"],
+      leaseId: "lease-1",
+      senderGroupId: alertsGroup.id,
+      sessionId: "session-1",
+    });
+    expect(scanStore.getSenderGroupCleanupContextForSession("session-1", receiptsGroup.id).eligibleMessageIds).toEqual(["a-3"]);
+
+    scanStore.applyCleanupTrashMutationsForSession("session-1", ["a-1"]);
+
+    const updatedAlertsGroup = scanStore.getSanitizedScanForSession("session-1").senderGroups.find((group) => group.representativeAddress === "alerts@example.com");
+    const updatedMessage = scanStore.listNormalizedMessagesForSession("session-1").find((message) => message.id === "a-1");
+
+    expect(scanStore.getSenderGroupCleanupContextForSession("session-1", alertsGroup.id).eligibleMessageIds).toEqual([]);
+    expect(updatedAlertsGroup).toEqual(expect.objectContaining({
+      activeCount: 1,
+      messageCount: 3,
+      sourceCounts: {
+        ACTIVE_MAIL: 1,
+        TRASH: 2,
+      },
+      trashCount: 2,
+      unreadCount: 2,
+    }));
+    expect(updatedMessage).toEqual(
+      expect.objectContaining({
+        labelIds: expect.arrayContaining(["TRASH", "UNREAD"]),
+        source: SCAN_SOURCES.TRASH,
+      }),
+    );
+    expect(updatedMessage.labelIds).not.toContain("INBOX");
+
+    scanStore.applyCleanupTrashMutationsForSession("session-1", ["a-1"]);
+
+    expect(scanStore.getSenderGroupCleanupContextForSession("session-1", alertsGroup.id).eligibleMessageIds).toEqual([]);
+    expect(scanStore.getSanitizedScanForSession("session-1").senderGroups.find((group) => group.representativeAddress === "alerts@example.com")).toEqual(
+      expect.objectContaining({
+        activeCount: 1,
+        messageCount: 3,
+        sourceCounts: {
+          ACTIVE_MAIL: 1,
+          TRASH: 2,
+        },
+        trashCount: 2,
+        unreadCount: 2,
+      }),
+    );
+  });
 });
