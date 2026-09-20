@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  DEFAULT_SCAN_METADATA_CONCURRENCY,
+  DEFAULT_SCAN_PAGE_SIZE,
   DEFAULT_SESSION_TTL_HOURS,
   getPublicAppConfig,
   getServerAppConfig,
@@ -33,6 +35,8 @@ describe("getPublicAppConfig", () => {
     vi.stubEnv("GITHUB_URL", "https://github.com/acme/pidgeot");
     vi.stubEnv("SESSION_SECRET", "super-secret");
     vi.stubEnv("SESSION_TTL_HOURS", "8");
+    vi.stubEnv("SCAN_PAGE_SIZE", "40");
+    vi.stubEnv("SCAN_METADATA_CONCURRENCY", "6");
     vi.stubEnv("GOOGLE_CLIENT_ID", "client-id");
     vi.stubEnv("GOOGLE_CLIENT_SECRET", "client-secret");
     vi.stubEnv("GOOGLE_REDIRECT_URI", "https://app.pidgeot.test/api/auth/google/callback");
@@ -45,6 +49,8 @@ describe("getPublicAppConfig", () => {
       sessionSecret: "super-secret",
       sessionTtlHours: 8,
       processingLeaseTtlSeconds: 120,
+      scanMetadataConcurrency: 6,
+      scanPageSize: 40,
       googleClientId: "client-id",
       googleClientSecret: "client-secret",
       googleRedirectUri: "https://app.pidgeot.test/api/auth/google/callback",
@@ -56,5 +62,12 @@ describe("getPublicAppConfig", () => {
     vi.unstubAllEnvs();
 
     expect(getServerAppConfig().sessionTtlHours).toBe(DEFAULT_SESSION_TTL_HOURS);
+  });
+
+  it("defaults the scan limits to conservative shared configuration", () => {
+    vi.unstubAllEnvs();
+
+    expect(getServerAppConfig().scanPageSize).toBe(DEFAULT_SCAN_PAGE_SIZE);
+    expect(getServerAppConfig().scanMetadataConcurrency).toBe(DEFAULT_SCAN_METADATA_CONCURRENCY);
   });
 });

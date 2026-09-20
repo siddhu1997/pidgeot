@@ -10,7 +10,7 @@ import { createGmailRetryPolicy } from "@/lib/gmail/retry-policy";
 import { createProcessingLeaseStore } from "@/lib/sessions/processing-lease-store";
 
 describe("gmail client foundation", () => {
-  it("exposes only the narrow Phase 2A Gmail boundary", () => {
+  it("exposes only the active Gmail foundation boundary", () => {
     const gmailClient = createGmailClient({
       config: {},
       fetchImpl: vi.fn(),
@@ -20,9 +20,57 @@ describe("gmail client foundation", () => {
     });
 
     expect(gmailClient).toHaveProperty("getMessageMetadata");
-    expect(gmailClient).not.toHaveProperty("listMessages");
+    expect(gmailClient).toHaveProperty("listMessagePage");
     expect(gmailClient).not.toHaveProperty("getMessageFull");
     expect(gmailClient).not.toHaveProperty("trashMessage");
+  });
+
+  it("lists bounded pages using server-side Gmail credentials only", async () => {
+    const sessionStore = createActiveSessionStore();
+    const processingLeaseStore = createProcessingLeaseStore({ ttlMs: 1000 });
+    const session = sessionStore.createSession({
+      accountKey: "account-key",
+      email: "user@example.com",
+      gmail: createGmailReadyState({
+        accessToken: "token-a",
+        accessTokenExpiresAt: Date.now() + 10 * 60 * 1000,
+        grantedScopes: ["scope-a"],
+        refreshToken: "refresh-a",
+      }),
+      googleSubject: "subject-a",
+    });
+    const lease = processingLeaseStore.acquireLease({ sessionId: session.id });
+    const fetchImpl = vi.fn().mockResolvedValue({
+      json: async () => ({
+        messages: [{ id: "message-1", threadId: "thread-1" }],
+        nextPageToken: "page-2",
+      }),
+      ok: true,
+    });
+    const gmailClient = createGmailClient({
+      config: {},
+      fetchImpl,
+      oauthClientFactory: vi.fn(),
+      processingLeaseStore,
+      sessionStore,
+    });
+
+    const result = await gmailClient.listMessagePage({
+      leaseId: lease.id,
+      maxResults: 25,
+      pageToken: "page-1",
+      query: "-in:trash -in:spam",
+      sessionId: session.id,
+    });
+
+    expect(result).toEqual({
+      messages: [{ id: "message-1", threadId: "thread-1" }],
+      nextPageToken: "page-2",
+    });
+    expect(fetchImpl.mock.calls[0][0]).toContain("maxResults=25");
+    expect(fetchImpl.mock.calls[0][0]).toContain("pageToken=page-1");
+    expect(fetchImpl.mock.calls[0][0]).toContain("q=-in%3Atrash+-in%3Aspam");
+    expect(fetchImpl.mock.calls[0][1].headers.Authorization).toBe("Bearer token-a");
   });
 
   it("requires valid processing ownership and server-side Gmail credentials", async () => {
