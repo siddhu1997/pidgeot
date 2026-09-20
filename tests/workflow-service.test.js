@@ -9,6 +9,7 @@ import { SCAN_SOURCES, SCAN_STATES } from "@/lib/scanning/constants";
 import { createScanStore } from "@/lib/scanning/scan-store";
 import { createUnsubscribeExecutionService } from "@/lib/unsubscribe/execution-service";
 import { createUnsubscribeExecutionStore } from "@/lib/unsubscribe/execution-store";
+import { createUnsubscribeUsageStore } from "@/lib/unsubscribe/usage-store";
 import { createWorkflowService } from "@/lib/workflow/service";
 import { WORKFLOW_EXECUTION_STATES } from "@/lib/workflow/constants";
 import { createWorkflowStore } from "@/lib/workflow/store";
@@ -115,6 +116,7 @@ function createWorkflowHarness({
   const processingLeaseStore = createProcessingLeaseStore({ ttlMs: 60_000 });
   const scanStore = createScanStore();
   const unsubscribeExecutionStore = createUnsubscribeExecutionStore();
+  const unsubscribeUsageStore = createUnsubscribeUsageStore();
   const workflowStore = createWorkflowStore();
   const cleanupExecutionService = createCleanupExecutionService({
     config: { cleanupMutationConcurrency: 1 },
@@ -125,6 +127,7 @@ function createWorkflowHarness({
   });
   const unsubscribeExecutionService = createUnsubscribeExecutionService({
     config: {
+      automaticUnsubscribeMonthlyLimit: 5000,
       unsubscribeExecutionConcurrency: 1,
       unsubscribeMaxRedirects: 2,
       unsubscribeMaxResponseBytes: 16 * 1024,
@@ -138,6 +141,7 @@ function createWorkflowHarness({
     processingLeaseStore,
     scanStore,
     transport: { executeOperation: transportExecute },
+    usageStore: unsubscribeUsageStore,
   });
   const workflowService = createWorkflowService({
     cleanupExecutionService,
@@ -162,6 +166,7 @@ function createWorkflowHarness({
     transportExecute,
     unsubscribeExecutionService,
     unsubscribeExecutionStore,
+    unsubscribeUsageStore,
     workflowService,
     workflowStore,
   };
@@ -412,6 +417,14 @@ describe("workflow service", () => {
         }),
       }),
     ]);
+    expect(workflow.usage).toEqual({
+      automaticUnsubscribe: expect.objectContaining({
+        monthlyLimit: 5000,
+        remainingCount: 5000,
+        successfulCount: 0,
+        state: "AVAILABLE",
+      }),
+    });
   });
 
   it("executes cleanup and unsubscribe by sender-group selection across multiple groups and reuses underlying idempotency", async () => {

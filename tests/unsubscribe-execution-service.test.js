@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { PROCESSING_LEASE_STATES } from "@/lib/sessions/processing-lease-policy";
 import { createUnsubscribeExecutionStore } from "@/lib/unsubscribe/execution-store";
 import { createUnsubscribeExecutionService } from "@/lib/unsubscribe/execution-service";
+import { createUnsubscribeUsageStore } from "@/lib/unsubscribe/usage-store";
 
 function createOperation(id, overrides = {}) {
   return {
@@ -30,6 +31,7 @@ function createServiceHarness({
   lease = createLease(),
   operations = [],
   scanState = "PARTIAL_RESULTS_AVAILABLE",
+  usageStore = createUnsubscribeUsageStore(),
   transportExecute = vi.fn(async (operation) => ({
     completedAt: Date.now(),
     operationId: operation.id,
@@ -60,6 +62,7 @@ function createServiceHarness({
   };
   const service = createUnsubscribeExecutionService({
     config: {
+      automaticUnsubscribeMonthlyLimit: 5000,
       unsubscribeExecutionConcurrency: 1,
       unsubscribeMaxRedirects: 2,
       unsubscribeMaxResponseBytes: 16 * 1024,
@@ -73,6 +76,7 @@ function createServiceHarness({
     processingLeaseStore,
     scanStore,
     transport: { executeOperation: transportExecute },
+    usageStore,
   });
 
   return {
@@ -81,6 +85,7 @@ function createServiceHarness({
     scanStore,
     service,
     transportExecute,
+    usageStore,
   };
 }
 
@@ -95,7 +100,7 @@ describe("unsubscribe execution service", () => {
 
     const result = await service.executeSenderGroup({
       senderGroupId: "sg_1",
-      session: { id: "session-1" },
+      session: { accountKey: "account-key", id: "session-1" },
     });
 
     expect(result.status).toBe("MANUAL_ACTION_REQUIRED");
@@ -125,17 +130,21 @@ describe("unsubscribe execution service", () => {
       transportExecute,
     });
 
-    const first = service.executeSenderGroup({ senderGroupId: "sg_1", session: { id: "session-1" } });
-    const second = service.executeSenderGroup({ senderGroupId: "sg_1", session: { id: "session-1" } });
+    const first = service.executeSenderGroup({ senderGroupId: "sg_1", session: { accountKey: "account-key", id: "session-1" } });
+    const second = service.executeSenderGroup({ senderGroupId: "sg_1", session: { accountKey: "account-key", id: "session-1" } });
     deferred.resolve();
 
     const [firstResult, secondResult] = await Promise.all([first, second]);
-    const thirdResult = await service.executeSenderGroup({ senderGroupId: "sg_1", session: { id: "session-1" } });
+    const thirdResult = await service.executeSenderGroup({ senderGroupId: "sg_1", session: { accountKey: "account-key", id: "session-1" } });
 
     expect(firstResult.status).toBe("ALL_SUCCEEDED");
     expect(secondResult.status).toBe("ALL_SUCCEEDED");
     expect(thirdResult.operationResults[0].status).toBe("ALREADY_COMPLETED");
     expect(transportExecute).toHaveBeenCalledTimes(1);
+    expect(service.getAccountUsage({ session: { accountKey: "account-key" } })).toEqual(expect.objectContaining({
+      remainingCount: 4999,
+      successfulCount: 1,
+    }));
   });
 
   it("reports partial success across multiple operations and respects host cooldown after 429", async () => {
@@ -162,7 +171,7 @@ describe("unsubscribe execution service", () => {
       transportExecute,
     });
 
-    const result = await service.executeSenderGroup({ senderGroupId: "sg_1", session: { id: "session-1" } });
+    const result = await service.executeSenderGroup({ senderGroupId: "sg_1", session: { accountKey: "account-key", id: "session-1" } });
 
     expect(result.status).toBe("PARTIAL_SUCCESS");
     expect(result.operationResults).toEqual(expect.arrayContaining([
@@ -182,7 +191,7 @@ describe("unsubscribe execution service", () => {
 
     const paused = await pausedHarness.service.executeSenderGroup({
       senderGroupId: "sg_1",
-      session: { id: "session-1" },
+      session: { accountKey: "account-key", id: "session-1" },
     });
 
     expect(paused.operationResults[0].status).toBe("PAUSED");
@@ -196,7 +205,7 @@ describe("unsubscribe execution service", () => {
 
     const expired = await expiredHarness.service.executeSenderGroup({
       senderGroupId: "sg_1",
-      session: { id: "session-1" },
+      session: { accountKey: "account-key", id: "session-1" },
     });
 
     expect(expired.operationResults[0].status).toBe("LEASE_EXPIRED");
@@ -254,7 +263,7 @@ describe("unsubscribe execution service", () => {
       transport: { executeOperation: transportExecute },
     });
 
-    const result = await service.executeSenderGroup({ senderGroupId: "sg_1", session: { id: "session-1" } });
+    const result = await service.executeSenderGroup({ senderGroupId: "sg_1", session: { accountKey: "account-key", id: "session-1" } });
 
     expect(result.operationResults).toEqual(expect.arrayContaining([
       expect.objectContaining({ operationId: "uo_1", status: "SUCCESS" }),
@@ -270,7 +279,76 @@ describe("unsubscribe execution service", () => {
 
     await expect(service.executeSenderGroup({
       senderGroupId: "missing",
-      session: { id: "session-2" },
+      session: { accountKey: "account-key", id: "session-2" },
     })).rejects.toMatchObject({ code: "unsubscribe_sender_group_not_found" });
+  });
+
+  it("does not consume quota for manual-only operations", async () => {
+    const { service } = createServiceHarness({
+      operations: [createOperation("uo_mailto", {
+        status: "MANUAL_ACTION_REQUIRED",
+        type: "MAILTO",
+      })],
+    });
+
+    await service.executeSenderGroup({ senderGroupId: "sg_1", session: { accountKey: "account-key", id: "session-1" } });
+
+    expect(service.getAccountUsage({ session: { accountKey: "account-key" } })).toEqual(expect.objectContaining({
+      remainingCount: 5000,
+      successfulCount: 0,
+    }));
+  });
+
+  it("enforces the monthly automatic unsubscribe limit per account", async () => {
+    const usageStore = createUnsubscribeUsageStore();
+    const baseConfig = {
+      automaticUnsubscribeMonthlyLimit: 1,
+      unsubscribeExecutionConcurrency: 1,
+      unsubscribeMaxRedirects: 2,
+      unsubscribeMaxResponseBytes: 16 * 1024,
+      unsubscribeRequestTimeoutMs: 5000,
+      unsubscribeRetryBaseDelayMs: 1,
+      unsubscribeRetryJitterMs: 0,
+      unsubscribeRetryMaxAttempts: 2,
+      unsubscribeRetryMaxDelayMs: 2,
+    };
+    const firstHarness = createServiceHarness({
+      operations: [createOperation("uo_1")],
+      usageStore,
+    });
+    const secondHarness = createServiceHarness({
+      operations: [createOperation("uo_2")],
+      usageStore,
+    });
+    const firstService = createUnsubscribeExecutionService({
+      config: baseConfig,
+      executionStore: firstHarness.executionStore,
+      processingLeaseStore: firstHarness.processingLeaseStore,
+      scanStore: firstHarness.scanStore,
+      transport: { executeOperation: firstHarness.transportExecute },
+      usageStore,
+    });
+    const secondService = createUnsubscribeExecutionService({
+      config: baseConfig,
+      executionStore: secondHarness.executionStore,
+      processingLeaseStore: secondHarness.processingLeaseStore,
+      scanStore: secondHarness.scanStore,
+      transport: { executeOperation: secondHarness.transportExecute },
+      usageStore,
+    });
+    const session = { accountKey: "account-key", id: "session-1" };
+
+    const firstResult = await firstService.executeSenderGroup({ senderGroupId: "sg_1", session });
+    const secondResult = await secondService.executeSenderGroup({ senderGroupId: "sg_1", session });
+
+    expect(firstResult.operationResults[0].status).toBe("SUCCESS");
+    expect(secondResult.operationResults[0].status).toBe("USAGE_LIMIT_REACHED");
+    expect(firstHarness.transportExecute).toHaveBeenCalledTimes(1);
+    expect(secondHarness.transportExecute).not.toHaveBeenCalled();
+    expect(secondService.getAccountUsage({ session })).toEqual(expect.objectContaining({
+      remainingCount: 0,
+      state: "LIMIT_REACHED",
+      successfulCount: 1,
+    }));
   });
 });

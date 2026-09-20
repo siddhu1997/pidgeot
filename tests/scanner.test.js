@@ -386,6 +386,37 @@ describe("scan service", () => {
     expect(status.counters.messagesNormalized).toBeGreaterThanOrEqual(1);
   });
 
+  it("stops with RESOURCE_LIMIT_REACHED before scanning beyond the retained message budget", async () => {
+    const fixture = createSyntheticMailboxFixture({
+      activePages: [
+        { messages: [{ id: "active-1" }, { id: "active-2" }], nextPageToken: "page-2" },
+        { messages: [{ id: "active-3" }], nextPageToken: null },
+      ],
+    });
+    const scanService = createScanService({
+      config: {
+        scanMaxRetainedMessages: 2,
+        scanMetadataConcurrency: 2,
+        scanPageSize: 2,
+      },
+      gmailClient: fixture.gmailClient,
+      processingLeaseStore: createProcessingLeaseStore({ ttlMs: 1000 }),
+      scanStore: createScanStore(),
+    });
+    const session = createSession();
+
+    const limited = await scanService.startScan({ session });
+
+    expect(limited.state).toBe(SCAN_STATES.RESOURCE_LIMIT_REACHED);
+    expect(limited.counters.messagesNormalized).toBe(2);
+    expect(limited.resourceLimit).toEqual(expect.objectContaining({
+      code: "MAX_RETAINED_MESSAGES",
+      currentMessageCount: 2,
+      maxRetainedMessages: 2,
+    }));
+    expect(fixture.getSummary().metadataReads.map((entry) => entry.messageId)).toEqual(["active-1", "active-2"]);
+  });
+
   it("fails safely on non-retryable list failures and keeps the error classification", async () => {
     const fixture = createSyntheticMailboxFixture({
       listFailures: new Map([
