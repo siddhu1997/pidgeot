@@ -28,9 +28,9 @@ export default function PrivacyPage() {
             Pidgeot is being built to minimize retained Gmail data.
           </h1>
           <p className="max-w-3xl text-base leading-7 text-slate-300">
-            This route describes the current project posture during the auth foundation stage.
-            Google sign-in can be enabled with identity-only scopes, but Gmail mailbox access is
-            still intentionally deferred while the privacy and retention boundaries stay explicit.
+            This route describes the current privacy posture for the sign-in and inbox-connection
+            flow. Pidgeot starts with Google sign-in, asks for Gmail access as a separate step,
+            and keeps the privacy boundary explicit before inbox cleanup begins.
           </p>
         </div>
 
@@ -44,8 +44,8 @@ export default function PrivacyPage() {
 
         <div className="rounded-[22px] border border-dashed border-[#f4c95d]/40 bg-[#f4c95d]/8 p-4 text-sm leading-6 text-[#fbe9b2]">
           The repository now includes a fuller privacy draft in `PRIVACY.md`, while snapshot
-          retention, Gmail scope justification, and restoration behavior will expand further as the
-          mailbox features land.
+          retention, Gmail scope justification, and restoration behavior will continue to expand as
+          inbox cleanup surfaces are added.
         </div>
 
         <div className="flex flex-wrap gap-3">
@@ -53,7 +53,7 @@ export default function PrivacyPage() {
             href="/"
             className="inline-flex items-center justify-center rounded-full border border-white/14 px-5 py-3 text-sm font-semibold text-white"
           >
-            Back to shell
+            Back to Pidgeot
           </Link>
           <a
             href={config.githubUrl}

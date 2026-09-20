@@ -32,9 +32,9 @@ export default function SecurityPage() {
             The highest-risk surfaces are identified before they are implemented.
           </h1>
           <p className="max-w-3xl text-base leading-7 text-slate-300">
-            Google OAuth session establishment is now part of the implementation surface, while
-            Gmail mailbox access and unsubscribe execution remain deferred. This page keeps the
-            security model explicit as those later-phase capabilities are added.
+            Google sign-in and Gmail connection are already part of the current product surface.
+            This page keeps the security model explicit as inbox scanning, unsubscribe work, and
+            cleanup flows continue to expand.
           </p>
         </div>
 
@@ -56,7 +56,7 @@ export default function SecurityPage() {
           href="/"
           className="inline-flex w-fit items-center justify-center rounded-full border border-white/14 px-5 py-3 text-sm font-semibold text-white"
         >
-          Back to shell
+          Back to Pidgeot
         </Link>
       </div>
     </main>

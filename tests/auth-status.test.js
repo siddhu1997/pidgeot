@@ -12,6 +12,7 @@ describe("auth status helpers", () => {
     expect(getAuthStatusNotification(searchParams)).toMatchObject({
       code: "success",
       kind: "auth",
+      message: "You’re signed in. Connect Gmail when you’re ready for Pidgeot to inspect your inbox.",
       tone: "success",
     });
   });
@@ -22,8 +23,14 @@ describe("auth status helpers", () => {
     expect(getAuthStatusNotification(searchParams)).toMatchObject({
       code: "gmail_connected",
       kind: "auth",
+      label: "Inbox connected",
       tone: "success",
     });
+  });
+
+  it("does not expose deferred-phase language in auth notifications", () => {
+    expect(getAuthStatusNotification(new URLSearchParams("auth=success")).message.toLowerCase()).not.toContain("deferred");
+    expect(getAuthStatusNotification(new URLSearchParams("auth=gmail_connected")).message.toLowerCase()).not.toContain("server memory");
   });
 
   it("prefers authError over auth when both are present", () => {
