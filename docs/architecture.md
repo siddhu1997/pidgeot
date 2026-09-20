@@ -16,7 +16,8 @@ Pidgeot is designed to be:
 - `app/`: UI routes and API routes
 - `lib/auth/`: Google OAuth, session cookies, state validation
 - `lib/gmail/`: Gmail client and quota-aware request wrapper
-- `lib/scanning/`: incremental mailbox traversal and aggregation
+- `lib/scanning/`: incremental mailbox traversal, checkpointing, and metadata normalization
+- `lib/grouping/`: deterministic sender identity normalization and sender grouping
 - `lib/classification/`: deterministic candidate classification
 - `lib/unsubscribe/`: standards-first unsubscribe detection and execution
 - `lib/sessions/`: process-local active session and later snapshot abstractions
@@ -67,7 +68,7 @@ Gmail credentials are never part of the 24-hour cleanup snapshot.
 
 All Gmail API access must flow through a narrow server-side Gmail client facade. The browser never calls Gmail directly, never receives Gmail OAuth tokens, and never receives arbitrary Gmail API responses.
 
-In Phase 2A, that facade is intentionally narrower than a mailbox client. It does not yet expose mailbox listing, pagination, full-message or body retrieval, or Trash mutation. Those operational capabilities remain deferred to later phases.
+In Phase 2B, that facade now supports mailbox listing and metadata-only retrieval for the scanner. It still does not expose full-message or body retrieval, Trash mutation, or arbitrary Gmail API proxy behavior.
 
 The Gmail client boundary centralizes:
 
@@ -76,6 +77,51 @@ The Gmail client boundary centralizes:
 - retry/backoff policy
 - Gmail error mapping
 - processing lease enforcement
+
+## Scan model
+
+Phase 2B adds a process-local incremental scan engine layered on top of the Gmail client boundary.
+
+The scan engine:
+
+- traverses Gmail through bounded `messages.list` pages
+- keeps Active Mail and Trash pagination/checkpoint state independent
+- fetches only Gmail metadata using `messages.get` with an explicit header allowlist
+- normalizes the metadata into a deterministic internal representation
+- makes partial normalized results available in process-local scan state as each chunk commits
+- never fetches bodies, attachments, snippets, or full MIME payloads
+- never modifies Gmail state
+
+The scan checkpoint remains process-local and ephemeral. It stores only scan IDs, source state, page tokens, bounded pending message IDs for the current page, counters, timestamps, and normalized metadata needed by later phases.
+
+## Sender grouping model
+
+Phase 3A adds a deterministic sender-grouping layer that consumes the normalized scan message stream and updates session-local sender groups incrementally.
+
+The grouping layer:
+
+- groups by exact canonical sender address when available
+- uses normalized `List-ID` as strong multi-address grouping evidence
+- never merges solely on shared domain or display name
+- keeps sender domains distinct from unsubscribe service domains derived from unsubscribe metadata
+- aggregates total, unread, active-mail, and trash counts without making additional Gmail API calls
+- stores deterministic grouping signals so later UI can explain why messages were grouped
+
+Sender-group state remains embedded in the process-local scan state. It is session-isolated, sanitized before API responses, and does not expose raw Gmail payloads or arbitrary header blobs.
+
+## Classification model
+
+Phase 3B adds a pure deterministic sender classifier layered on top of sender-group aggregates.
+
+The classifier:
+
+- consumes sender-group counts, header-derived aggregates, sender-domain data, and unsubscribe-infrastructure observations
+- produces one category from `PROMOTIONAL`, `NEWSLETTER`, `SOCIAL`, `NOTIFICATION`, `TRANSACTIONAL`, `UPDATES`, or `UNKNOWN`
+- derives an independent `HIGH`, `MEDIUM`, or `LOW` attention level from observable engagement and volume signals
+- records structured classification and attention signals for explainability
+- never merges groups, fetches additional Gmail data, or calls external services
+
+Classification is recomputed from the latest sender-group aggregate state whenever scan summaries are sanitized, so chunk boundaries and message order do not change the result.
 
 ## Runtime model
 

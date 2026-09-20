@@ -2,7 +2,7 @@
 
 ## Current phase scope
 
-The current implementation phase is limited to Google authentication and authenticated session establishment. Gmail cleanup actions are not yet implemented.
+The current implementation uses Google authentication, Gmail-capable server-side sessions, and the Phase 2B incremental scanner foundation. Cleanup actions are not yet implemented.
 
 ## Scope policy
 
@@ -22,9 +22,9 @@ Gmail-capable implementation target:
 - `openid`: allows Google identity assertion in the OAuth flow
 - `email`: allows recovery of the authenticated account email needed for account association and future snapshot restoration
 
-## Why Gmail cleanup scope is deferred
+## Why the Gmail scope remains narrow
 
-The current phase does not scan mailboxes or modify Gmail state, so requesting `gmail.modify` now would violate the narrow-scope requirement.
+The implementation now scans mailboxes incrementally through `messages.list` and metadata-only `messages.get`, but it still does not modify Gmail state. The scope therefore remains limited to `gmail.modify` without expanding into broader Gmail permissions.
 
 When Gmail processing is explicitly enabled by the user, the Gmail-capable flow should request:
 

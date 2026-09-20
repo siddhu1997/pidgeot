@@ -13,7 +13,7 @@ The project is designed around explicit user control and minimal retention:
 
 ## Current status
 
-Phase 0 and Phase 1 foundations are the active focus. The repository currently includes:
+Phase 3B classification infrastructure is now in place. The repository currently includes:
 
 - a Next.js App Router scaffold in JavaScript
 - Tailwind CSS v4
@@ -21,8 +21,11 @@ Phase 0 and Phase 1 foundations are the active focus. The repository currently i
 - lightweight environment configuration and session planning
 - linting and test setup
 - Google OAuth implementation scaffolding with separate identity-only and Gmail-capable flows
+- a process-local incremental Gmail scanner with metadata-only retrieval and pause/resume checkpoints
+- deterministic sender identity normalization and session-isolated sender grouping
+- deterministic sender classification and observable attention signals
 
-The repository does not yet include Gmail scanning, sender grouping, unsubscribe execution, ephemeral snapshot restoration, or real-time cleanup queue processing.
+The repository does not yet include unsubscribe execution, ephemeral snapshot restoration, or real-time cleanup queue processing.
 
 ## What Pidgeot will do
 
@@ -31,6 +34,7 @@ When complete, Pidgeot will:
 - authenticate the user with Google OAuth
 - scan Gmail incrementally without loading the full mailbox into memory
 - build conservative sender groups
+- classify sender groups with deterministic local rules
 - explain why a sender was surfaced using deterministic signals only
 - let the user explicitly choose unsubscribe and "move unread to Trash"
 - stop processing when the active session disappears
@@ -59,7 +63,7 @@ During the current auth-only stage, the implementation uses the narrowest identi
 
 The Gmail-capable foundation uses a separate explicit flow that adds `gmail.modify` only when the user enables mailbox access. That flow requests offline access so a large incremental scan is not arbitrarily limited to one access-token lifetime. Refresh tokens remain process-local and memory-only.
 
-Phase 2A does not yet expose mailbox listing, pagination, full-message or body retrieval, or Trash mutation. Those operational Gmail capabilities are deferred to later phases.
+Phase 2B adds incremental mailbox discovery, Gmail pagination, and metadata-only retrieval. Full-message or body retrieval, unsubscribe handling, and Trash mutation remain deferred to later phases.
 
 Scope planning and Google verification guidance live in:
 
@@ -136,11 +140,9 @@ Setup guidance:
 
 The specification for this app is intentionally phased. The next major implementation steps are:
 
-1. Phase 2B: incremental scanner and metadata retrieval.
-2. Phase 2C: deterministic classification and sender grouping.
-3. Phase 2D: unsubscribe detection and execution.
-4. Phase 2E: cleanup queue and Trash operations.
-5. Later follow-up: ephemeral in-memory snapshot storage with TTL and account isolation.
+1. Phase 3C: unsubscribe detection and execution.
+2. Phase 3D: cleanup queue and Trash operations.
+3. Later follow-up: ephemeral in-memory snapshot storage with TTL and account isolation.
 
 ## Routes available now
 
@@ -151,6 +153,10 @@ The specification for this app is intentionally phased. The next major implement
 - `/api/auth/google/callback`: OAuth callback endpoint
 - `/api/auth/session`: authenticated session status endpoint
 - `/api/auth/logout`: session invalidation endpoint
+- `/api/scan/start`: start a new incremental scan and process the next chunk
+- `/api/scan/status`: inspect derived scan state and counters
+- `/api/scan/pause`: pause the current scan cooperatively
+- `/api/scan/resume`: resume the current scan from its last checkpoint
 
 ## Documentation set
 
@@ -164,6 +170,6 @@ The specification for this app is intentionally phased. The next major implement
 
 ## Notes
 
-The current UI still uses explicit placeholder data for the sender cards and queue preview. This is deliberate so the interaction model can be established before any Gmail scanning or cleanup operations are added.
+The current UI still uses explicit placeholder data for the sender cards and queue preview. This is deliberate because Phase 3B adds the server-side classification foundation only; unsubscribe and cleanup UI are still later-phase work.
 
 Because the long-term session and snapshot model is process-local in v1, a server restart destroys active sessions and snapshots. That tradeoff is intentional and documented rather than silently replaced with persistent storage.

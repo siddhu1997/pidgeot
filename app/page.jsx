@@ -65,19 +65,20 @@ export default async function Home() {
         <header className="grid gap-4 rounded-[28px] border border-white/12 bg-[rgba(7,11,19,0.84)] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.35)] backdrop-blur md:grid-cols-[1.5fr_1fr] md:p-7">
           <div className="space-y-5">
             <div className="inline-flex items-center gap-2 rounded-full border border-cyan-300/30 bg-cyan-300/10 px-3 py-1 font-mono text-xs uppercase tracking-[0.28em] text-cyan-100">
-              Phase 2B foundation
+              Phase 3B foundation
             </div>
             <div className="space-y-3">
               <p className="font-mono text-xs uppercase tracking-[0.32em] text-slate-400">
                 Privacy-first Gmail cleanup
               </p>
               <h1 className="max-w-3xl text-4xl leading-none font-semibold tracking-[-0.05em] text-white sm:text-6xl">
-                Pidgeot now has the Gmail scanner foundation, not the cleanup engine yet.
+                Pidgeot now has the Gmail scanner and classification foundations, not the cleanup engine yet.
               </h1>
               <p className="max-w-2xl text-base leading-7 text-slate-300 sm:text-lg">
-                This phase adds the server-side incremental scanner, metadata-only Gmail retrieval,
-                and process-local scan checkpoints for a mailbox cleaner that stays deterministic,
-                explicit, and temporary by design.
+                This phase adds deterministic sender classification on top of the server-side
+                incremental scanner, metadata-only Gmail retrieval, and process-local scan
+                checkpoints for a mailbox cleaner that stays deterministic, explicit, and temporary
+                by design.
               </p>
             </div>
             <div className="flex flex-wrap gap-3">
@@ -125,8 +126,7 @@ export default async function Home() {
               </div>
             ) : authConfigured ? (
               <div className="rounded-2xl border border-cyan-300/30 bg-cyan-300/8 px-4 py-3 text-sm text-cyan-100">
-                Google sign-in is configured. Gmail mailbox access remains deferred until later phases.
-                Google sign-in is configured. The server-side scanner foundation is available once Gmail access is enabled.
+                Google sign-in is configured. The server-side scanner and grouping foundations are available once Gmail access is enabled.
               </div>
             ) : (
               <div className="rounded-2xl border border-dashed border-amber-300/30 bg-amber-300/8 px-4 py-3 text-sm text-amber-100">
@@ -167,9 +167,9 @@ export default async function Home() {
                 Delivery note
               </p>
               <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-200">
-                Phase 2B keeps the UI as a marked product preview. The counters and sender groups
-                below are still mock data while scanning, grouping, classification, and cleanup are
-                staged behind later application flows.
+                Phase 3B keeps the UI as a marked product preview. The counters and sender groups
+                below are still mock data while unsubscribe and cleanup are staged behind later
+                application flows.
               </p>
             </div>
 
@@ -179,7 +179,7 @@ export default async function Home() {
                   <p className="font-mono text-xs uppercase tracking-[0.28em] text-slate-400">
                     Auth stage
                   </p>
-                  <h3 className="mt-2 text-xl font-semibold text-white">Google OAuth, without Gmail scopes yet</h3>
+                  <h3 className="mt-2 text-xl font-semibold text-white">Google OAuth with an optional Gmail-capable upgrade</h3>
                   <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
                     The current implementation authenticates the Google account with identity-only scopes and can upgrade to a Gmail-capable in-memory session when the user explicitly grants `gmail.modify` offline access.
                   </p>
