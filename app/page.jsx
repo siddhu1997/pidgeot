@@ -27,6 +27,7 @@ export default async function Home() {
             email={session?.email || null}
             gmailAuthState={gmailAuthState}
             initialScan={initialScan}
+            workflowExecutionMode={serverConfig.devWorkflowSimulationEnabled ? "SIMULATED" : "LIVE"}
           />
         ) : (
           <PidgeotEntryScreen

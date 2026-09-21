@@ -7,6 +7,10 @@ import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from "motion/r
 
 import { SENDER_CATEGORIES } from "@/lib/classification/constants";
 import { SCAN_STATES } from "@/lib/scanning/constants";
+import {
+  WORKFLOW_EXECUTION_PROGRESS_PHASES,
+  WORKFLOW_EXECUTION_STATES,
+} from "@/lib/workflow/constants";
 
 import {
   ACTIVE_SCAN_STATES,
@@ -50,9 +54,359 @@ const ATTENTION_TOOLTIPS = {
 const ACTIONABILITY_TOOLTIPS = {
   AUTOMATIC: "Pidgeot found a supported one-click unsubscribe mechanism.",
   "Cleanup candidate": "Pidgeot found a sender with an available cleanup path.",
-  "Discovery only": "Pidgeot found this sender, but there is currently no cleanup action available.",
+  "Discovery only": "Nothing actionable for this sender.",
   "Sensitive mail": "This sender is kept out of cleanup because it appears to be financial or otherwise sensitive.",
 };
+
+const AUTOMATIC_UNSUBSCRIBE_STATUSES = new Set(["AUTOMATIC", "ONE_CLICK_READY"]);
+const EXECUTION_RUNNING_PHASE_COPY = {
+  [WORKFLOW_EXECUTION_PROGRESS_PHASES.PROCESSING]: "Processing",
+  [WORKFLOW_EXECUTION_PROGRESS_PHASES.QUEUED]: "Queued",
+};
+
+function getWorkflowActionExecution(group, actionType) {
+  if (actionType === "unsubscribe") {
+    return group?.workflow?.unsubscribeExecution || null;
+  }
+
+  if (actionType === "cleanup") {
+    return group?.workflow?.cleanupExecution || null;
+  }
+
+  return null;
+}
+
+function hasExecutionStarted(execution) {
+  return execution?.state && execution.state !== WORKFLOW_EXECUTION_STATES.NOT_STARTED;
+}
+
+function isExecutionRunning(execution) {
+  return execution?.state === WORKFLOW_EXECUTION_STATES.RUNNING;
+}
+
+function getCleanupExecutionDescription(execution) {
+  const summary = execution?.execution?.summary || null;
+  const successfulCount = summary?.successfulCount || 0;
+  const remainingEligibleCount = summary?.remainingEligibleCount || 0;
+
+  if (execution?.state === WORKFLOW_EXECUTION_STATES.RUNNING) {
+    if (execution.phase === WORKFLOW_EXECUTION_PROGRESS_PHASES.QUEUED) {
+      return execution.queueSize > 1
+        ? `Queued ${execution.queuePosition} of ${execution.queueSize}`
+        : "Queued for simulated cleanup";
+    }
+
+    return "Removing unread messages from the local discovery view only.";
+  }
+
+  if (execution?.state === WORKFLOW_EXECUTION_STATES.COMPLETED) {
+    return successfulCount > 0
+      ? `Removed ${formatQuantity(successfulCount, "message")} from this local discovery view.`
+      : "No unread messages remained for cleanup.";
+  }
+
+  if (execution?.state === WORKFLOW_EXECUTION_STATES.PARTIAL_SUCCESS) {
+    return `${formatQuantity(successfulCount, "message")} removed · ${formatQuantity(remainingEligibleCount, "message")} left untouched`;
+  }
+
+  if (execution?.state === WORKFLOW_EXECUTION_STATES.PAUSED) {
+    return "Paused before local cleanup could finish. Resume the scan to continue.";
+  }
+
+  if (execution?.state === WORKFLOW_EXECUTION_STATES.FAILED) {
+    return "Local cleanup did not complete for this sender.";
+  }
+
+  return null;
+}
+
+function getUnsubscribeExecutionDescription(group, execution) {
+  const summary = execution?.execution?.summary || null;
+  const successfulCount = summary?.successfulCount || 0;
+  const manualCount = summary?.manualCount || 0;
+
+  if (execution?.state === WORKFLOW_EXECUTION_STATES.RUNNING) {
+    if (execution.phase === WORKFLOW_EXECUTION_PROGRESS_PHASES.QUEUED) {
+      return execution.queueSize > 1
+        ? `Queued ${execution.queuePosition} of ${execution.queueSize}`
+        : "Queued for simulated unsubscribe";
+    }
+
+    return "Simulating unsubscribe handling without contacting the sender.";
+  }
+
+  if (execution?.state === WORKFLOW_EXECUTION_STATES.COMPLETED) {
+    return successfulCount > 0
+      ? "Handled locally in simulation. Gmail and sender endpoints were not touched."
+      : "Nothing needed an automatic unsubscribe path.";
+  }
+
+  if (execution?.state === WORKFLOW_EXECUTION_STATES.PARTIAL_SUCCESS) {
+    if (successfulCount > 0 && manualCount > 0) {
+      return `${formatQuantity(successfulCount, "path")} simulated · ${formatQuantity(manualCount, "path")} still manual`;
+    }
+
+    return "Some unsubscribe work completed locally before execution stopped.";
+  }
+
+  if (execution?.state === WORKFLOW_EXECUTION_STATES.MANUAL_ACTION_REQUIRED) {
+    return "This sender stays manual-only in simulation.";
+  }
+
+  if (execution?.state === WORKFLOW_EXECUTION_STATES.PAUSED) {
+    return "Paused before unsubscribe simulation could finish. Resume the scan to continue.";
+  }
+
+  if (group?.workflow?.unsubscribeHandledLocally) {
+    return "Handled locally in simulation. Gmail and sender endpoints were not touched.";
+  }
+
+  return null;
+}
+
+function getExecutionTone(execution) {
+  if (execution?.state === WORKFLOW_EXECUTION_STATES.COMPLETED) {
+    return "border-emerald-300/22 bg-emerald-300/10 text-emerald-100";
+  }
+
+  if (execution?.state === WORKFLOW_EXECUTION_STATES.PARTIAL_SUCCESS || execution?.state === WORKFLOW_EXECUTION_STATES.MANUAL_ACTION_REQUIRED) {
+    return "border-[#f4c95d]/22 bg-[#f4c95d]/10 text-[#fbe9b2]";
+  }
+
+  if (execution?.state === WORKFLOW_EXECUTION_STATES.RUNNING) {
+    return "border-cyan-300/24 bg-cyan-300/10 text-cyan-100";
+  }
+
+  if (execution?.state === WORKFLOW_EXECUTION_STATES.PAUSED) {
+    return "border-slate-300/18 bg-white/6 text-slate-200";
+  }
+
+  return "border-rose-300/22 bg-rose-300/10 text-rose-100";
+}
+
+function getExecutionLabel(actionType, execution) {
+  const prefix = actionType === "unsubscribe" ? "Unsubscribe" : "Delete unread";
+
+  if (execution?.state === WORKFLOW_EXECUTION_STATES.RUNNING) {
+    return `${prefix} · ${EXECUTION_RUNNING_PHASE_COPY[execution.phase] || "Running"}`;
+  }
+
+  if (execution?.state === WORKFLOW_EXECUTION_STATES.COMPLETED) {
+    return `${prefix} · Completed`;
+  }
+
+  if (execution?.state === WORKFLOW_EXECUTION_STATES.PARTIAL_SUCCESS) {
+    return `${prefix} · Partial success`;
+  }
+
+  if (execution?.state === WORKFLOW_EXECUTION_STATES.MANUAL_ACTION_REQUIRED) {
+    return `${prefix} · Manual required`;
+  }
+
+  if (execution?.state === WORKFLOW_EXECUTION_STATES.PAUSED) {
+    return `${prefix} · Paused`;
+  }
+
+  return `${prefix} · Failed`;
+}
+
+function hasCompletedCleanupAction(group) {
+  const cleanupExecution = group?.workflow?.cleanupExecution || null;
+  const successfulCount = cleanupExecution?.execution?.summary?.successfulCount || 0;
+
+  return successfulCount > 0 && (
+    cleanupExecution?.state === WORKFLOW_EXECUTION_STATES.COMPLETED ||
+    cleanupExecution?.state === WORKFLOW_EXECUTION_STATES.PARTIAL_SUCCESS
+  );
+}
+
+function hasCompletedUnsubscribeAction(group) {
+  const unsubscribeExecution = group?.workflow?.unsubscribeExecution || null;
+
+  return Boolean(group?.workflow?.unsubscribeHandledLocally) || (
+    hasExecutionStarted(unsubscribeExecution) && (
+      unsubscribeExecution.state === WORKFLOW_EXECUTION_STATES.COMPLETED ||
+      unsubscribeExecution.state === WORKFLOW_EXECUTION_STATES.PARTIAL_SUCCESS
+    )
+  );
+}
+
+function hasRemainingCleanupAction(group) {
+  return getGroupCleanupEligibleCount(group) > 0;
+}
+
+function hasRemainingUnsubscribeAction(group) {
+  return getGroupUnsubscribeAvailability(group).available;
+}
+
+function hasAutomaticUnsubscribeAction(group) {
+  return getGroupUnsubscribeAvailability(group).automaticCount > 0;
+}
+
+function isGroupActionable(group) {
+  if (!group || isSensitiveFinancialGroup(group)) {
+    return false;
+  }
+
+  return hasRemainingCleanupAction(group) || hasRemainingUnsubscribeAction(group);
+}
+
+function getGroupPrimarySortRank(group) {
+  if (hasAutomaticUnsubscribeAction(group)) {
+    return 0;
+  }
+
+  if (isGroupActionable(group)) {
+    return 1;
+  }
+
+  return 2;
+}
+
+function isGroupDone(group) {
+  const hasAnyCompletedAction = hasCompletedCleanupAction(group) || hasCompletedUnsubscribeAction(group);
+
+  if (!hasAnyCompletedAction) {
+    return false;
+  }
+
+  return !hasRemainingCleanupAction(group) && !hasRemainingUnsubscribeAction(group);
+}
+
+function getDoneSummary(group) {
+  const fragments = [];
+  const cleanupSuccessfulCount = group?.workflow?.cleanupExecution?.execution?.summary?.successfulCount || 0;
+
+  if (hasCompletedUnsubscribeAction(group)) {
+    fragments.push("Unsubscribed");
+  }
+
+  if (cleanupSuccessfulCount > 0) {
+    fragments.push(`${formatCount(cleanupSuccessfulCount)} unread handled`);
+  }
+
+  if (fragments.length === 0) {
+    return "Handled in simulation";
+  }
+
+  return fragments.join(" · ");
+}
+
+function buildExecutionSummary({ actionType, groups }) {
+  const relevantGroups = groups.filter((group) => {
+    const execution = getWorkflowActionExecution(group, actionType);
+
+    if (hasExecutionStarted(execution)) {
+      return true;
+    }
+
+    if (actionType === "unsubscribe") {
+      return Boolean(group?.workflow?.unsubscribeOperationsAvailable || group?.workflow?.unsubscribeHandledLocally);
+    }
+
+    return getGroupCleanupEligibleCount(group) > 0;
+  });
+  const executions = relevantGroups
+    .map((group) => ({
+      execution: getWorkflowActionExecution(group, actionType),
+      group,
+    }))
+    .filter(({ execution }) => Boolean(execution));
+  const counts = {
+    completed: 0,
+    failed: 0,
+    manual: 0,
+    partial: 0,
+    paused: 0,
+    processing: 0,
+    queued: 0,
+    running: 0,
+  };
+
+  executions.forEach(({ execution }) => {
+    if (execution.state === WORKFLOW_EXECUTION_STATES.RUNNING) {
+      counts.running += 1;
+      if (execution.phase === WORKFLOW_EXECUTION_PROGRESS_PHASES.QUEUED) {
+        counts.queued += 1;
+      } else {
+        counts.processing += 1;
+      }
+      return;
+    }
+
+    if (execution.state === WORKFLOW_EXECUTION_STATES.COMPLETED) {
+      counts.completed += 1;
+      return;
+    }
+
+    if (execution.state === WORKFLOW_EXECUTION_STATES.PARTIAL_SUCCESS) {
+      counts.partial += 1;
+      return;
+    }
+
+    if (execution.state === WORKFLOW_EXECUTION_STATES.MANUAL_ACTION_REQUIRED) {
+      counts.manual += 1;
+      return;
+    }
+
+    if (execution.state === WORKFLOW_EXECUTION_STATES.PAUSED) {
+      counts.paused += 1;
+      return;
+    }
+
+    if (execution.state === WORKFLOW_EXECUTION_STATES.FAILED) {
+      counts.failed += 1;
+    }
+  });
+
+  let headline = null;
+
+  if (counts.running > 0) {
+    const fragments = [];
+
+    if (counts.processing > 0) {
+      fragments.push(`${formatQuantity(counts.processing, "sender")} processing`);
+    }
+
+    if (counts.queued > 0) {
+      fragments.push(`${formatQuantity(counts.queued, "sender")} queued`);
+    }
+
+    headline = fragments.join(" · ");
+  } else if (counts.partial > 0 || counts.paused > 0 || counts.manual > 0 || counts.failed > 0 || counts.completed > 0) {
+    const fragments = [];
+
+    if (counts.completed > 0) {
+      fragments.push(`${formatQuantity(counts.completed, "sender")} completed`);
+    }
+
+    if (counts.partial > 0) {
+      fragments.push(`${formatQuantity(counts.partial, "sender")} partial`);
+    }
+
+    if (counts.manual > 0) {
+      fragments.push(`${formatQuantity(counts.manual, "sender")} manual`);
+    }
+
+    if (counts.paused > 0) {
+      fragments.push(`${formatQuantity(counts.paused, "sender")} paused`);
+    }
+
+    if (counts.failed > 0) {
+      fragments.push(`${formatQuantity(counts.failed, "sender")} failed`);
+    }
+
+    headline = fragments.join(" · ");
+  }
+
+  return {
+    counts,
+    hasResults: executions.length > 0,
+    hasRunning: counts.running > 0,
+    headline,
+    relevantCount: relevantGroups.length,
+  };
+}
 
 function getAttentionTone(attention) {
   if (attention === "HIGH") {
@@ -125,7 +479,7 @@ function getActionabilityLabel(group, selected) {
     return "Sensitive mail";
   }
 
-  if (isCleanupCandidate(group)) {
+  if (isGroupActionable(group)) {
     return "Cleanup candidate";
   }
 
@@ -142,50 +496,6 @@ function getActionabilityTooltip(label, unsubscribe) {
   }
 
   return ACTIONABILITY_TOOLTIPS[label] || null;
-}
-
-function sortGroupsByUnread(groups, sortMode) {
-  if (sortMode === "discovery") {
-    return groups;
-  }
-
-  const direction = sortMode === "unread-asc" ? 1 : -1;
-
-  return [...groups]
-    .map((group, index) => ({ group, index }))
-    .sort((left, right) => {
-      const unreadDifference = ((left.group.unreadCount || 0) - (right.group.unreadCount || 0)) * direction;
-
-      if (unreadDifference !== 0) {
-        return unreadDifference;
-      }
-
-      return left.index - right.index;
-    })
-    .map((entry) => entry.group);
-}
-
-function orderGroupsBySnapshot(groups, orderedIds) {
-  if (!orderedIds || orderedIds.length === 0) {
-    return groups;
-  }
-
-  const orderIndexById = new Map(orderedIds.map((id, index) => [id, index]));
-
-  return [...groups]
-    .map((group, index) => ({
-      group,
-      index,
-      snapshotIndex: orderIndexById.has(group.id) ? orderIndexById.get(group.id) : Number.POSITIVE_INFINITY,
-    }))
-    .sort((left, right) => {
-      if (left.snapshotIndex !== right.snapshotIndex) {
-        return left.snapshotIndex - right.snapshotIndex;
-      }
-
-      return left.index - right.index;
-    })
-    .map((entry) => entry.group);
 }
 
 function TooltipTag({ children, className, description }) {
@@ -210,7 +520,283 @@ function TooltipTag({ children, className, description }) {
 }
 
 function getReviewableGroupCount(senderGroups) {
-  return senderGroups.filter((group) => isCleanupCandidate(group)).length;
+  return senderGroups.filter((group) => isGroupActionable(group)).length;
+}
+
+function getGroupCleanupEligibleCount(group) {
+  if (Number.isFinite(group?.workflow?.cleanupEligibleCount)) {
+    return group.workflow.cleanupEligibleCount;
+  }
+
+  if (isSensitiveFinancialGroup(group)) {
+    return 0;
+  }
+
+  return Number.isFinite(group?.unreadCount) ? group.unreadCount : 0;
+}
+
+function getGroupUnsubscribeAvailability(group) {
+  const mechanisms = Array.isArray(group?.unsubscribe?.mechanisms) ? group.unsubscribe.mechanisms : [];
+  const actionableMechanisms = mechanisms.filter((mechanism) => (
+    AUTOMATIC_UNSUBSCRIBE_STATUSES.has(mechanism?.status) || mechanism?.manualActionRequired || mechanism?.status === "MANUAL_ACTION_REQUIRED"
+  ));
+  const automaticCount = actionableMechanisms.filter((mechanism) => (
+    AUTOMATIC_UNSUBSCRIBE_STATUSES.has(mechanism?.status) || mechanism?.automatic
+  )).length;
+  const manualCount = actionableMechanisms.filter((mechanism) => (
+    !AUTOMATIC_UNSUBSCRIBE_STATUSES.has(mechanism?.status) && (mechanism?.manualActionRequired || mechanism?.status === "MANUAL_ACTION_REQUIRED")
+  )).length;
+  const available = Boolean(group?.workflow?.unsubscribeOperationsAvailable ?? actionableMechanisms.length > 0);
+
+  return {
+    available,
+    automaticCount,
+    manualCount,
+  };
+}
+
+function buildSelectionSnapshot(groups) {
+  const selectedCount = groups.length;
+  let cleanupEligibleGroupCount = 0;
+  let cleanupEligibleUnreadCount = 0;
+  let unsubscribeAvailableCount = 0;
+  let automaticOnlyCount = 0;
+  let manualOnlyCount = 0;
+  let mixedPathCount = 0;
+
+  for (const group of groups) {
+    const cleanupEligibleCount = getGroupCleanupEligibleCount(group);
+    const unsubscribeAvailability = getGroupUnsubscribeAvailability(group);
+
+    if (cleanupEligibleCount > 0) {
+      cleanupEligibleGroupCount += 1;
+      cleanupEligibleUnreadCount += cleanupEligibleCount;
+    }
+
+    if (unsubscribeAvailability.available) {
+      unsubscribeAvailableCount += 1;
+
+      if (unsubscribeAvailability.automaticCount > 0 && unsubscribeAvailability.manualCount > 0) {
+        mixedPathCount += 1;
+      } else if (unsubscribeAvailability.automaticCount > 0) {
+        automaticOnlyCount += 1;
+      } else if (unsubscribeAvailability.manualCount > 0) {
+        manualOnlyCount += 1;
+      }
+    }
+  }
+
+  return {
+    automaticOnlyCount,
+    cleanupEligibleGroupCount,
+    cleanupEligibleUnreadCount,
+    manualOnlyCount,
+    mixedPathCount,
+    selectedCount,
+    unsubscribeAvailableCount,
+  };
+}
+
+function sortGroupsForDisplay(groups, sortMode) {
+  return [...groups]
+    .map((group, index) => ({ group, index }))
+    .sort((left, right) => {
+      const primaryDifference = getGroupPrimarySortRank(left.group) - getGroupPrimarySortRank(right.group);
+
+      if (primaryDifference !== 0) {
+        return primaryDifference;
+      }
+
+      if (sortMode === "unread-asc" || sortMode === "unread-desc") {
+        const direction = sortMode === "unread-asc" ? 1 : -1;
+        const unreadDifference = ((left.group.unreadCount || 0) - (right.group.unreadCount || 0)) * direction;
+
+        if (unreadDifference !== 0) {
+          return unreadDifference;
+        }
+      }
+
+      return left.index - right.index;
+    })
+    .map((entry) => entry.group);
+}
+
+function getSortDescription(sortMode) {
+  if (sortMode === "unread-desc") {
+    return "Sorted by unsubscribe availability, then unread count high to low.";
+  }
+
+  if (sortMode === "unread-asc") {
+    return "Sorted by unsubscribe availability, then unread count low to high.";
+  }
+
+  return "Sorted by unsubscribe availability, then live discovery order.";
+}
+
+function getSelectionActionSummary(snapshot) {
+  if (!snapshot) {
+    return null;
+  }
+
+  const unsubscribeEnabled = snapshot.unsubscribeAvailableCount > 0;
+  const cleanupEnabled = snapshot.cleanupEligibleGroupCount > 0 && snapshot.cleanupEligibleUnreadCount > 0;
+
+  let unsubscribeDetail = "Unavailable for this selection.";
+
+  if (unsubscribeEnabled) {
+    const unsubscribeParts = [];
+
+    if (snapshot.automaticOnlyCount > 0) {
+      unsubscribeParts.push(`${formatQuantity(snapshot.automaticOnlyCount, "sender")} automatic`);
+    }
+
+    if (snapshot.manualOnlyCount > 0) {
+      unsubscribeParts.push(`${formatQuantity(snapshot.manualOnlyCount, "sender")} manual`);
+    }
+
+    if (snapshot.mixedPathCount > 0) {
+      unsubscribeParts.push(`${formatQuantity(snapshot.mixedPathCount, "sender")} mixed`);
+    }
+
+    unsubscribeDetail = unsubscribeParts.join(" · ");
+  }
+
+  return {
+    cleanup: {
+      description: cleanupEnabled
+        ? `${formatQuantity(snapshot.cleanupEligibleGroupCount, "sender")} · ${formatQuantity(snapshot.cleanupEligibleUnreadCount, "unread message")}`
+        : "No unread cleanup available.",
+      enabled: cleanupEnabled,
+      label: "Delete unread",
+    },
+    unsubscribe: {
+      description: unsubscribeDetail,
+      enabled: unsubscribeEnabled,
+      label: "Unsubscribe",
+    },
+  };
+}
+
+function SelectionActionButton({ active, description, disabled, label, onClick }) {
+  return (
+    <button
+      aria-pressed={active}
+      className={classNames(
+        "flex min-h-[72px] min-w-[220px] flex-1 flex-col items-start justify-center rounded-[22px] border px-4 py-3 text-left transition-colors duration-200",
+        disabled
+          ? "cursor-not-allowed border-white/8 bg-black/20 text-slate-500"
+          : active
+            ? "border-cyan-300/28 bg-cyan-300/12 text-white"
+            : "border-white/12 bg-[rgba(7,11,19,0.88)] text-white hover:border-white/24 hover:bg-white/8",
+      )}
+      disabled={disabled}
+      onClick={onClick}
+      type="button"
+    >
+      <span className="text-sm font-semibold">{label}</span>
+      <span className={classNames("mt-1 text-xs leading-5", disabled ? "text-slate-500" : active ? "text-cyan-100" : "text-slate-400")}>
+        {description}
+      </span>
+    </button>
+  );
+}
+
+function SelectionActionBar({ actionSummary, activeDecision, executionRequestState, executionSummary, onDecisionChange, onExecute, reducedMotion, selectedCount, workflowExecutionMode }) {
+  const selectionLabel = formatQuantity(selectedCount, "sender");
+  const executionButtonLabel = workflowExecutionMode === "SIMULATED"
+    ? activeDecision === "unsubscribe"
+      ? "Run simulated unsubscribe"
+      : "Run simulated delete unread"
+    : activeDecision === "unsubscribe"
+      ? "Unsubscribe selected"
+      : "Delete unread";
+  const executeDisabled = !activeDecision || executionRequestState !== "idle" || executionSummary?.hasRunning;
+
+  return (
+    <motion.section
+      key="selection-action-bar"
+      className="mt-5 rounded-[28px] border border-cyan-300/16 bg-[linear-gradient(135deg,rgba(56,189,248,0.12),rgba(7,11,19,0.94)_28%,rgba(7,11,19,0.94))] p-4 shadow-[0_18px_48px_rgba(0,0,0,0.24)]"
+      initial={reducedMotion ? false : { opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={reducedMotion ? undefined : { opacity: 0, y: 8 }}
+      transition={{ duration: reducedMotion ? 0 : 0.22 }}
+    >
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-cyan-100/70">Selection</p>
+          <h3 className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-white">{selectionLabel} selected</h3>
+          <p className="mt-2 text-sm leading-6 text-slate-300">What would you like Pidgeot to do with these senders?</p>
+        </div>
+        <div className="grid gap-2 text-sm text-slate-300">
+          <p>
+            <span className="font-semibold text-white">Unsubscribe:</span>{" "}
+            {actionSummary.unsubscribe.enabled ? actionSummary.unsubscribe.description : "Unavailable for this selection."}
+          </p>
+          <p>
+            <span className="font-semibold text-white">Delete unread:</span>{" "}
+            {actionSummary.cleanup.enabled ? actionSummary.cleanup.description : "No unread cleanup available."}
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-4 flex flex-col gap-3 lg:flex-row">
+        <SelectionActionButton
+          active={activeDecision === "unsubscribe"}
+          description={actionSummary.unsubscribe.description}
+          disabled={!actionSummary.unsubscribe.enabled || executionRequestState !== "idle"}
+          label={actionSummary.unsubscribe.label}
+          onClick={() => onDecisionChange(activeDecision === "unsubscribe" ? null : "unsubscribe")}
+        />
+        <SelectionActionButton
+          active={activeDecision === "cleanup"}
+          description={actionSummary.cleanup.description}
+          disabled={!actionSummary.cleanup.enabled || executionRequestState !== "idle"}
+          label={actionSummary.cleanup.label}
+          onClick={() => onDecisionChange(activeDecision === "cleanup" ? null : "cleanup")}
+        />
+      </div>
+
+      {activeDecision ? (
+        <div className="mt-4 rounded-[22px] border border-white/10 bg-black/18 px-4 py-3 text-sm text-slate-300">
+          <p>
+            {activeDecision === "unsubscribe"
+              ? "This selection keeps the real unsubscribe mix intact. Automatic-capable senders stay automatic, and manual-only senders stay manual."
+              : "Delete unread continues to target unread messages from the selected senders only."}
+          </p>
+          {workflowExecutionMode === "SIMULATED" ? (
+            <p className="mt-2 text-cyan-100">SIMULATION MODE — Gmail won&apos;t be changed.</p>
+          ) : null}
+          {executionSummary?.headline ? (
+            <p className="mt-2 text-slate-200">{executionSummary.headline}</p>
+          ) : null}
+          <div className="mt-3 flex flex-wrap gap-3">
+            <button
+              className={classNames(
+                "rounded-2xl px-4 py-2.5 text-sm font-semibold transition-colors duration-200",
+                executeDisabled
+                  ? "cursor-not-allowed border border-white/10 bg-white/6 text-slate-500"
+                  : "bg-[#f4c95d] text-slate-950 hover:bg-[#f7d77d]",
+              )}
+              disabled={executeDisabled}
+              onClick={onExecute}
+              type="button"
+            >
+              {executionRequestState === "submitting"
+                ? "Queueing..."
+                : executionSummary?.hasRunning
+                  ? "Execution in progress"
+                  : executionButtonLabel}
+            </button>
+            {executionSummary?.hasRunning ? (
+              <span className="inline-flex items-center rounded-full border border-cyan-300/24 bg-cyan-300/10 px-3 py-2 text-xs font-medium text-cyan-100">
+                Queued and processing follow the live workflow state.
+              </span>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </motion.section>
+  );
 }
 
 function hasPendingPauseWork(scan) {
@@ -429,65 +1015,114 @@ function ScanRitualSurface({ mode, reducedMotion, scan, senderGroups }) {
   );
 }
 
-function SenderGroupCard({ group, reducedMotion, selected, onToggle }) {
+function SenderGroupCard({ group, mode = "active", reducedMotion, selected, onToggle }) {
   const title = getGroupTitle(group);
   const domainChips = group.senderDomains.slice(0, 3);
   const sensitiveFinancial = isSensitiveFinancialGroup(group);
-  const cleanupCandidate = isCleanupCandidate(group);
-  const statusLabel = getActionabilityLabel(group, selected);
-  const statusTooltip = getActionabilityTooltip(statusLabel, group.unsubscribe);
+  const actionable = isGroupActionable(group);
+  const done = mode === "done";
+  const statusLabel = done ? "Handled" : getActionabilityLabel(group, false);
+  const statusTooltip = done ? "Completed in this simulated workflow session only." : getActionabilityTooltip(statusLabel, group.unsubscribe);
+  const cleanupEligibleCount = getGroupCleanupEligibleCount(group);
+  const unsubscribeAvailability = getGroupUnsubscribeAvailability(group);
+  const unsubscribeExecution = group?.workflow?.unsubscribeExecution || null;
+  const cleanupExecution = group?.workflow?.cleanupExecution || null;
+  const doneSummary = done ? getDoneSummary(group) : null;
+  const executionCards = [
+    unsubscribeExecution && hasExecutionStarted(unsubscribeExecution)
+      ? {
+          actionType: "unsubscribe",
+          description: getUnsubscribeExecutionDescription(group, unsubscribeExecution),
+          execution: unsubscribeExecution,
+        }
+      : null,
+    cleanupExecution && hasExecutionStarted(cleanupExecution)
+      ? {
+          actionType: "cleanup",
+          description: getCleanupExecutionDescription(cleanupExecution),
+          execution: cleanupExecution,
+        }
+      : null,
+  ].filter(Boolean);
+  const selectionDetail = !done && selected
+    ? {
+        cleanup: cleanupEligibleCount > 0
+          ? `Delete unread: ${formatQuantity(cleanupEligibleCount, "message")}`
+          : "Delete unread unavailable",
+        unsubscribe: unsubscribeAvailability.available
+          ? unsubscribeAvailability.automaticCount > 0 && unsubscribeAvailability.manualCount > 0
+            ? "Unsubscribe available: automatic + manual"
+            : unsubscribeAvailability.automaticCount > 0
+              ? "Unsubscribe available"
+              : "Unsubscribe available: manual"
+          : "Unsubscribe unavailable",
+      }
+    : null;
+  const interactive = !done && actionable;
 
   return (
     <motion.div
       layout
-      aria-disabled={!cleanupCandidate}
-      aria-pressed={cleanupCandidate ? selected : undefined}
+      aria-disabled={!interactive}
+      aria-pressed={interactive ? selected : undefined}
       className={classNames(
         "h-full min-h-[272px] w-full rounded-[26px] border bg-[rgba(8,14,25,0.86)] p-4 text-left shadow-[0_16px_34px_rgba(0,0,0,0.16)] transition-colors",
-        selected
-          ? "border-cyan-300/32"
-          : cleanupCandidate
+        done
+          ? "border-white/8 bg-[rgba(8,14,25,0.68)]"
+          : selected
+          ? "border-cyan-300/32 bg-[rgba(11,21,33,0.94)]"
+          : actionable
             ? "border-white/10"
             : sensitiveFinancial
               ? "border-amber-300/16 bg-[rgba(18,15,10,0.78)]"
               : "border-white/6 bg-[rgba(8,14,25,0.68)]",
-        cleanupCandidate ? "cursor-pointer" : "cursor-default",
+        interactive ? "cursor-pointer" : "cursor-default",
       )}
-      onClick={cleanupCandidate ? onToggle : undefined}
-      onKeyDown={cleanupCandidate ? (event) => {
+      onClick={interactive ? onToggle : undefined}
+      onKeyDown={interactive ? (event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           onToggle();
         }
       } : undefined}
-      role={cleanupCandidate ? "button" : undefined}
-      tabIndex={cleanupCandidate ? 0 : -1}
+      role={interactive ? "button" : undefined}
+      tabIndex={interactive ? 0 : -1}
       whileTap={reducedMotion ? undefined : { scale: 0.99 }}
     >
       <div className="flex h-full flex-col">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500">sender group</p>
+            {!done && selected ? (
+              <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.18em] text-cyan-100">Selected for action</p>
+            ) : null}
             <div className="mt-2 min-h-[56px] overflow-hidden">
               <h3 className="text-lg font-semibold leading-7 text-white">{title}</h3>
             </div>
             <p className="mt-1 truncate text-sm text-slate-400">{group.representativeAddress || "Representative address unavailable"}</p>
           </div>
-          <TooltipTag
-            className={classNames(
-              "shrink-0 rounded-full border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.16em]",
-              selected
-                ? "border-cyan-300/28 bg-cyan-300/12 text-cyan-100"
-                : sensitiveFinancial
+          <div className="flex shrink-0 items-center gap-2">
+            {!done && selected ? (
+              <span className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-cyan-300/28 bg-cyan-300/12 text-sm text-cyan-100">
+                ✓
+              </span>
+            ) : null}
+            <TooltipTag
+              className={classNames(
+                "shrink-0 rounded-full border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.16em]",
+                done
+                  ? "border-white/10 bg-white/6 text-slate-300"
+                  : sensitiveFinancial
                   ? "border-amber-300/22 bg-amber-300/10 text-amber-100"
-                  : cleanupCandidate
+                  : actionable
                     ? "border-white/10 bg-white/6 text-slate-300"
                     : "border-white/8 bg-black/18 text-slate-400",
-            )}
-            description={statusTooltip}
-          >
-            {statusLabel}
-          </TooltipTag>
+              )}
+              description={statusTooltip}
+            >
+              {statusLabel}
+            </TooltipTag>
+          </div>
         </div>
 
         <div className="mt-4 grid grid-cols-2 gap-3 border-t border-white/8 pt-4 text-sm">
@@ -534,6 +1169,37 @@ function SenderGroupCard({ group, reducedMotion, selected, onToggle }) {
           </div>
         </div>
 
+        {selectionDetail ? (
+          <div className="mt-4 rounded-[20px] border border-cyan-300/16 bg-cyan-300/8 px-3 py-3 text-sm text-slate-200">
+            <p>{selectionDetail.unsubscribe}</p>
+            <p className="mt-1">{selectionDetail.cleanup}</p>
+          </div>
+        ) : null}
+
+        {doneSummary ? (
+          <div className="mt-4 rounded-[20px] border border-white/10 bg-white/5 px-3 py-3 text-sm text-slate-200">
+            <p className="font-medium text-white">{doneSummary}</p>
+            <p className="mt-1 text-xs leading-5 text-slate-400">Completed in this session only. A fresh scan can rediscover this sender.</p>
+          </div>
+        ) : null}
+
+        {!done && executionCards.length > 0 ? (
+          <div className="mt-4 grid gap-2">
+            {executionCards.map(({ actionType, description, execution }) => (
+              <div
+                key={`${group.id}-${actionType}`}
+                className={classNames(
+                  "rounded-[18px] border px-3 py-3 text-sm",
+                  getExecutionTone(execution),
+                )}
+              >
+                <p className="font-medium">{getExecutionLabel(actionType, execution)}</p>
+                {description ? <p className="mt-1 text-xs leading-5">{description}</p> : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
+
         <div className="mt-auto min-h-[48px] pt-4">
           {domainChips.length > 0 ? (
             <div className="flex flex-wrap gap-2 overflow-hidden">
@@ -573,31 +1239,59 @@ async function readJson(url, options) {
   return payload;
 }
 
-export function ProductionScanScreen({ authConfigured, autoAdvance = true, email, gmailAuthState, initialScan }) {
+export function ProductionScanScreen({ authConfigured, autoAdvance = true, email, gmailAuthState, initialScan, workflowExecutionMode = "LIVE" }) {
   const router = useRouter();
   const reducedMotion = useReducedMotion();
   const [scan, setScan] = useState(initialScan);
   const [errorMessage, setErrorMessage] = useState(null);
   const [requestState, setRequestState] = useState("idle");
+  const [executionRequestState, setExecutionRequestState] = useState("idle");
   const [selectedIds, setSelectedIds] = useState([]);
+  const [selectionDecision, setSelectionDecision] = useState(null);
+  const [selectionWorkflow, setSelectionWorkflow] = useState(null);
+  const [activeResultTab, setActiveResultTab] = useState("active");
   const [sortMode, setSortMode] = useState("discovery");
   const [categoryFilters, setCategoryFilters] = useState([]);
-  const [activeSortSnapshot, setActiveSortSnapshot] = useState(null);
   const autoAdvanceVersionRef = useRef(0);
 
   const senderGroups = scan?.senderGroups || [];
+  const activeSelectionWorkflow = selectionWorkflow?.scan?.scanId === scan?.scanId
+    ? selectionWorkflow
+    : null;
+  const selectionWorkflowGroupById = new Map((activeSelectionWorkflow?.scan?.senderGroups || []).map((group) => [group.id, group]));
+  const resolvedSenderGroups = senderGroups.map((group) => selectionWorkflowGroupById.get(group.id) || group);
+  const activeSenderGroups = resolvedSenderGroups.filter((group) => !isGroupDone(group));
+  const doneSenderGroups = resolvedSenderGroups.filter((group) => isGroupDone(group));
+  const activeGroupById = new Map(activeSenderGroups.map((group) => [group.id, group]));
   const pauseSettling = scan?.state === SCAN_STATES.PAUSED && hasPendingPauseWork(scan);
   const pausing = requestState === "pause" || pauseSettling;
   const activeScan = Boolean(scan && ACTIVE_SCAN_STATES.has(scan.state));
   const filteredGroups = categoryFilters.length === 0
-    ? senderGroups
-    : senderGroups.filter((group) => categoryFilters.includes(group.category || SENDER_CATEGORIES.UNKNOWN));
-  const visibleGroups = sortMode === "discovery"
-    ? filteredGroups
-    : activeScan
-      ? orderGroupsBySnapshot(filteredGroups, activeSortSnapshot)
-      : sortGroupsByUnread(filteredGroups, sortMode);
-  const visibleSelectedIds = selectedIds.filter((id) => visibleGroups.some((group) => group.id === id && isCleanupCandidate(group)));
+    ? activeSenderGroups
+    : activeSenderGroups.filter((group) => categoryFilters.includes(group.category || SENDER_CATEGORIES.UNKNOWN));
+  const visibleGroups = sortGroupsForDisplay(filteredGroups, sortMode);
+  const selectedGroups = selectedIds
+    .map((id) => activeGroupById.get(id))
+    .filter(Boolean);
+  const selectedGroupIdSet = new Set(selectedGroups.map((group) => group.id));
+  const selectedCount = selectedGroups.length;
+  const visibleResultTab = activeResultTab === "done" && doneSenderGroups.length > 0
+    ? "done"
+    : "active";
+  const selectionSnapshot = buildSelectionSnapshot(selectedGroups);
+  const selectionActionSummary = getSelectionActionSummary(selectionSnapshot);
+  const activeSelectionDecision = selectionDecision === "unsubscribe" && !selectionActionSummary?.unsubscribe.enabled
+    ? null
+    : selectionDecision === "cleanup" && !selectionActionSummary?.cleanup.enabled
+      ? null
+      : selectionDecision;
+  const decisionExecutionSummary = activeSelectionDecision
+    ? buildExecutionSummary({
+        actionType: activeSelectionDecision,
+        groups: selectedGroups,
+      })
+    : null;
+  const activeDecisionHasRunningExecution = Boolean(decisionExecutionSummary?.hasRunning);
   const reviewableGroupCount = getReviewableGroupCount(senderGroups);
   const presentation = derivePresentation(scan, gmailAuthState);
   const effectivePresentation = pausing
@@ -622,6 +1316,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   const selectedCategorySummary = categoryFilters.length === 0
     ? "All categories"
     : `${categoryFilters.length} selected`;
+  const sortDescription = getSortDescription(sortMode);
   const discoveryTitle = scan?.state === SCAN_STATES.COMPLETE
     ? "Sender groups are ready for review."
     : pausing || scan?.state === SCAN_STATES.PAUSED || scan?.state === SCAN_STATES.RESOURCE_LIMIT_REACHED
@@ -639,6 +1334,71 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   const primaryActionDisabled = !effectivePresentation.actionType || pausing || (
     requestState !== "idle" && !(requestState === "auto-resume" && effectivePresentation.actionType === "pause")
   );
+
+  useEffect(() => {
+    if (!scan?.scanId || selectedCount === 0) {
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const payload = await readJson("/api/workflow/status");
+
+        if (cancelled) {
+          return;
+        }
+
+        setSelectionWorkflow(payload.workflow || null);
+        if (payload.workflow?.scan) {
+          setScan(payload.workflow.scan);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setErrorMessage(error.message || "The latest workflow status could not be loaded.");
+        }
+      }
+    }, 120);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [scan?.scanId, scan?.updatedAt, selectedCount]);
+
+  useEffect(() => {
+    if (!scan?.scanId || !activeDecisionHasRunningExecution) {
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const payload = await readJson("/api/workflow/status");
+
+        if (cancelled) {
+          return;
+        }
+
+        setSelectionWorkflow(payload.workflow || null);
+        if (payload.workflow?.scan) {
+          setScan(payload.workflow.scan);
+        }
+        setErrorMessage(null);
+      } catch (error) {
+        if (!cancelled) {
+          setErrorMessage(error.message || "The latest workflow status could not be loaded.");
+        }
+      }
+    }, 260);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [activeDecisionHasRunningExecution, scan?.scanId, selectionWorkflow]);
 
   useEffect(() => {
     if (!pauseSettling || requestState !== "idle") {
@@ -709,18 +1469,6 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
 
   function handleSortChange(nextSortMode) {
     setSortMode(nextSortMode);
-
-    if (nextSortMode === "discovery") {
-      setActiveSortSnapshot(null);
-      return;
-    }
-
-    if (activeScan) {
-      setActiveSortSnapshot(sortGroupsByUnread(filteredGroups, nextSortMode).map((group) => group.id));
-      return;
-    }
-
-    setActiveSortSnapshot(null);
   }
 
   function toggleCategoryFilter(category) {
@@ -734,7 +1482,6 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   function clearFilters() {
     setCategoryFilters([]);
     setSortMode("discovery");
-    setActiveSortSnapshot(null);
   }
 
   async function handleScanAction(actionType) {
@@ -760,6 +1507,12 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
       setRequestState(actionType);
       const payload = await readJson(target, { method: "POST" });
       setScan(payload.scan);
+      if (actionType === "start") {
+        setSelectedIds([]);
+        setSelectionDecision(null);
+        setSelectionWorkflow(null);
+        setActiveResultTab("active");
+      }
       setErrorMessage(null);
     } catch (error) {
       setErrorMessage(error.message || "The scan action could not be completed.");
@@ -769,17 +1522,63 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   }
 
   function toggleSelection(groupId) {
-    const group = senderGroups.find((entry) => entry.id === groupId);
+    const group = activeGroupById.get(groupId);
 
-    if (!isCleanupCandidate(group)) {
+    if (!isGroupActionable(group)) {
       return;
     }
+
+    setSelectionDecision(null);
 
     setSelectedIds((current) => (
       current.includes(groupId)
         ? current.filter((id) => id !== groupId)
         : [...current, groupId]
     ));
+  }
+
+  async function handleSelectionExecution() {
+    if (!activeSelectionDecision || executionRequestState !== "idle") {
+      return;
+    }
+
+    const executableGroups = selectedGroups.filter((group) => {
+      if (activeSelectionDecision === "unsubscribe") {
+        return Boolean(group?.workflow?.unsubscribeOperationsAvailable || hasExecutionStarted(group?.workflow?.unsubscribeExecution));
+      }
+
+      return getGroupCleanupEligibleCount(group) > 0 || hasExecutionStarted(group?.workflow?.cleanupExecution);
+    });
+
+    if (executableGroups.length === 0) {
+      return;
+    }
+
+    try {
+      setExecutionRequestState("submitting");
+      const payload = await readJson("/api/workflow/execute", {
+        body: JSON.stringify({
+          selections: executableGroups.map((group) => ({
+            actions: {
+              cleanup: activeSelectionDecision === "cleanup",
+              unsubscribe: activeSelectionDecision === "unsubscribe",
+            },
+            senderGroupId: group.id,
+          })),
+        }),
+        method: "POST",
+      });
+
+      setSelectionWorkflow(payload.workflow || null);
+      if (payload.workflow?.scan) {
+        setScan(payload.workflow.scan);
+      }
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error.message || "The workflow request could not be completed.");
+    } finally {
+      setExecutionRequestState("idle");
+    }
   }
 
   if (!authConfigured) {
@@ -890,6 +1689,12 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
                 Pidgeot is still looking. But it has already found sender groups you can start reviewing now.
               </div>
             ) : null}
+
+            {workflowExecutionMode === "SIMULATED" ? (
+              <div className="rounded-[22px] border border-cyan-300/24 bg-cyan-300/8 px-4 py-3 text-sm text-cyan-100">
+                SIMULATION MODE — Gmail won&apos;t be changed.
+              </div>
+            ) : null}
           </div>
 
           <ScanRitualSurface
@@ -915,77 +1720,136 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
             ) : null}
           </div>
           <div className="flex flex-wrap gap-2">
-            <CounterBadge label="Selected" value={visibleSelectedIds.length} />
+            <CounterBadge label="Selected" value={selectedCount} />
             <CounterBadge label="Mailbox" value={email} />
           </div>
         </div>
 
-        <div className="mt-5 flex flex-col gap-4 rounded-[24px] border border-white/10 bg-[rgba(8,14,25,0.72)] p-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-4">
-            <label className="grid min-w-[240px] gap-2">
-              <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">Sort by</span>
-              <span className="relative flex min-w-[240px] items-center">
-                <select
-                  className="min-h-[50px] w-full appearance-none rounded-2xl border border-white/12 bg-[rgba(7,11,19,0.92)] px-4 py-3 pr-10 text-sm text-white outline-none transition-colors duration-200 hover:border-white/24 focus:border-cyan-300/40"
-                  onChange={(event) => handleSortChange(event.target.value)}
-                  value={sortMode}
-                >
-                  <option value="discovery">Live discovery order</option>
-                  <option value="unread-desc">Unread: highest first</option>
-                  <option value="unread-asc">Unread: lowest first</option>
-                </select>
-                <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-slate-500">▾</span>
-              </span>
-            </label>
-
-            <details className="group relative min-w-[240px]">
-              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-2xl border border-white/12 bg-[rgba(7,11,19,0.92)] px-4 py-3 text-sm text-white transition-colors duration-200 hover:border-white/24">
-                <span>
-                  <span className="mr-2 font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">Filter by category</span>
-                  <span>{selectedCategorySummary}</span>
-                </span>
-                <span className="text-slate-500 transition-transform duration-150 group-open:rotate-180">▾</span>
-              </summary>
-              <div className="absolute left-0 top-[calc(100%+0.75rem)] z-20 w-[280px] rounded-[24px] border border-white/12 bg-[rgba(7,11,19,0.98)] p-3 shadow-[0_18px_40px_rgba(0,0,0,0.32)]">
-                <div className="grid gap-2">
-                  {CATEGORY_FILTER_OPTIONS.map((category) => {
-                    const checked = categoryFilters.includes(category);
-
-                    return (
-                      <label key={category} className="flex cursor-pointer items-center justify-between rounded-2xl border border-white/8 bg-white/4 px-3 py-2.5 text-sm text-slate-200 transition-colors duration-150 hover:bg-white/8">
-                        <span>{formatLabel(category)}</span>
-                        <input
-                          checked={checked}
-                          className="h-4 w-4 accent-cyan-300"
-                          onChange={() => toggleCategoryFilter(category)}
-                          type="checkbox"
-                        />
-                      </label>
-                    );
-                  })}
-                </div>
-                <button
-                  className="mt-3 w-full rounded-2xl border border-white/12 px-3 py-2 text-sm font-semibold text-white transition-colors duration-200 hover:border-white/24 hover:bg-white/8"
-                  onClick={clearFilters}
-                  type="button"
-                >
-                  Clear filters
-                </button>
-              </div>
-            </details>
+        <div className="mt-5 border-b border-white/10">
+          <div className="flex gap-6">
+            <button
+              aria-selected={visibleResultTab === "active"}
+              className={classNames(
+                "border-b-2 px-0 pb-3 pt-1 text-sm font-semibold transition-colors duration-200",
+                visibleResultTab === "active"
+                  ? "border-cyan-300 text-white"
+                  : "border-transparent text-slate-400 hover:text-slate-200",
+              )}
+              onClick={() => setActiveResultTab("active")}
+              role="tab"
+              type="button"
+            >
+              {`Active ${formatCount(activeSenderGroups.length)}`}
+            </button>
+            <button
+              aria-selected={visibleResultTab === "done"}
+              className={classNames(
+                "border-b-2 px-0 pb-3 pt-1 text-sm font-semibold transition-colors duration-200",
+                visibleResultTab === "done"
+                  ? "border-cyan-300 text-white"
+                  : "border-transparent text-slate-400 hover:text-slate-200",
+              )}
+              onClick={() => setActiveResultTab("done")}
+              role="tab"
+              type="button"
+            >
+              {`Done ${formatCount(doneSenderGroups.length)}`}
+            </button>
           </div>
-
-          <p className="text-sm text-slate-400">
-            Showing <span className="font-semibold text-white">{visibleGroups.length}</span> of <span className="font-semibold text-white">{senderGroups.length}</span> discovered groups.
-          </p>
         </div>
 
-        {scan?.state === SCAN_STATES.COMPLETE && senderGroups.length === 0 ? (
+        <AnimatePresence initial={false}>
+          {visibleResultTab === "active" && selectedCount > 0 && selectionActionSummary ? (
+            <SelectionActionBar
+              actionSummary={selectionActionSummary}
+              activeDecision={activeSelectionDecision}
+              executionRequestState={executionRequestState}
+              executionSummary={decisionExecutionSummary}
+              onDecisionChange={setSelectionDecision}
+              onExecute={handleSelectionExecution}
+              reducedMotion={reducedMotion}
+              selectedCount={selectedCount}
+              workflowExecutionMode={workflowExecutionMode}
+            />
+          ) : null}
+        </AnimatePresence>
+
+        {visibleResultTab === "active" ? (
+          <div className="mt-5 flex flex-col gap-4 rounded-[24px] border border-white/10 bg-[rgba(8,14,25,0.72)] p-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-4">
+              <label className="grid min-w-[240px] gap-2">
+                <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">Sort by</span>
+                <span className="relative flex min-w-[240px] items-center">
+                  <select
+                    className="min-h-[50px] w-full appearance-none rounded-2xl border border-white/12 bg-[rgba(7,11,19,0.92)] px-4 py-3 pr-10 text-sm text-white outline-none transition-colors duration-200 hover:border-white/24 focus:border-cyan-300/40"
+                    onChange={(event) => handleSortChange(event.target.value)}
+                    value={sortMode}
+                  >
+                    <option value="discovery">Live discovery order</option>
+                    <option value="unread-desc">Unread: highest first</option>
+                    <option value="unread-asc">Unread: lowest first</option>
+                  </select>
+                  <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-slate-500">▾</span>
+                </span>
+              </label>
+
+              <details className="group relative min-w-[240px]">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-2xl border border-white/12 bg-[rgba(7,11,19,0.92)] px-4 py-3 text-sm text-white transition-colors duration-200 hover:border-white/24">
+                  <span>
+                    <span className="mr-2 font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">Filter by category</span>
+                    <span>{selectedCategorySummary}</span>
+                  </span>
+                  <span className="text-slate-500 transition-transform duration-150 group-open:rotate-180">▾</span>
+                </summary>
+                <div className="absolute left-0 top-[calc(100%+0.75rem)] z-20 w-[280px] rounded-[24px] border border-white/12 bg-[rgba(7,11,19,0.98)] p-3 shadow-[0_18px_40px_rgba(0,0,0,0.32)]">
+                  <div className="grid gap-2">
+                    {CATEGORY_FILTER_OPTIONS.map((category) => {
+                      const checked = categoryFilters.includes(category);
+
+                      return (
+                        <label key={category} className="flex cursor-pointer items-center justify-between rounded-2xl border border-white/8 bg-white/4 px-3 py-2.5 text-sm text-slate-200 transition-colors duration-150 hover:bg-white/8">
+                          <span>{formatLabel(category)}</span>
+                          <input
+                            checked={checked}
+                            className="h-4 w-4 accent-cyan-300"
+                            onChange={() => toggleCategoryFilter(category)}
+                            type="checkbox"
+                          />
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <button
+                    className="mt-3 w-full rounded-2xl border border-white/12 px-3 py-2 text-sm font-semibold text-white transition-colors duration-200 hover:border-white/24 hover:bg-white/8"
+                    onClick={clearFilters}
+                    type="button"
+                  >
+                    Clear filters
+                  </button>
+                </div>
+              </details>
+            </div>
+
+            <div className="grid gap-1 text-right">
+              <p className="text-sm text-slate-400">
+                Showing <span className="font-semibold text-white">{visibleGroups.length}</span> of <span className="font-semibold text-white">{activeSenderGroups.length}</span> active groups.
+              </p>
+              <p className="text-xs text-slate-500">{sortDescription}</p>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-5 flex items-center justify-between rounded-[24px] border border-white/10 bg-[rgba(8,14,25,0.72)] px-4 py-3 text-sm text-slate-400">
+            <p>Completed senders stay here for this workflow session only.</p>
+            <p><span className="font-semibold text-white">{doneSenderGroups.length}</span> handled</p>
+          </div>
+        )}
+
+        {visibleResultTab === "active" && scan?.state === SCAN_STATES.COMPLETE && activeSenderGroups.length === 0 ? (
           <div className="mt-5 rounded-[24px] border border-white/10 bg-[rgba(8,14,25,0.76)] px-5 py-12 text-center">
-            <p className="text-lg font-semibold text-white">Pidgeot completed the scan but did not find sender groups to review yet.</p>
+            <p className="text-lg font-semibold text-white">Pidgeot completed the scan but did not find active sender groups to review yet.</p>
             <p className="mt-2 text-sm text-slate-400">Try another scan later after new mail arrives.</p>
           </div>
-        ) : visibleGroups.length === 0 ? (
+        ) : visibleResultTab === "active" && visibleGroups.length === 0 ? (
           <div className="mt-5 flex items-center justify-between rounded-[24px] border border-white/10 bg-[rgba(8,14,25,0.76)] px-5 py-4">
             <p className="text-sm text-slate-300">No sender groups match these filters.</p>
             <button
@@ -996,11 +1860,16 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
               Clear filters
             </button>
           </div>
+        ) : visibleResultTab === "done" && doneSenderGroups.length === 0 ? (
+          <div className="mt-5 rounded-[24px] border border-white/10 bg-[rgba(8,14,25,0.76)] px-5 py-12 text-center">
+            <p className="text-lg font-semibold text-white">No senders are done yet.</p>
+            <p className="mt-2 text-sm text-slate-400">Completed simulated actions will collect here without changing Gmail.</p>
+          </div>
         ) : (
           <LayoutGroup>
             <div className="mt-5 grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
               <AnimatePresence initial={false}>
-                {visibleGroups.map((group) => (
+                {(visibleResultTab === "active" ? visibleGroups : doneSenderGroups).map((group) => (
                   <motion.div
                     key={group.id}
                     layout
@@ -1011,9 +1880,10 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
                   >
                     <SenderGroupCard
                       group={group}
+                      mode={visibleResultTab === "done" ? "done" : "active"}
                       onToggle={() => toggleSelection(group.id)}
                       reducedMotion={reducedMotion}
-                      selected={visibleSelectedIds.includes(group.id)}
+                      selected={selectedGroupIdSet.has(group.id)}
                     />
                   </motion.div>
                 ))}
