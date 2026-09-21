@@ -213,6 +213,32 @@ function getReviewableGroupCount(senderGroups) {
   return senderGroups.filter((group) => isCleanupCandidate(group)).length;
 }
 
+function hasPendingPauseWork(scan) {
+  if (!scan?.sourceSummaries) {
+    return false;
+  }
+
+  return Object.values(scan.sourceSummaries).some((summary) => (
+    (summary?.inFlightMessageCount || 0) > 0
+  ));
+}
+
+function getActionButtonLabel({ actionLabel, pausing, requestState }) {
+  if (pausing) {
+    return "Pausing...";
+  }
+
+  if (requestState === "resume") {
+    return "Resuming...";
+  }
+
+  if (requestState === "start") {
+    return "Starting scan...";
+  }
+
+  return actionLabel;
+}
+
 function DiscoveryFact({ children }) {
   return (
     <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-200">
@@ -554,15 +580,15 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   const [errorMessage, setErrorMessage] = useState(null);
   const [requestState, setRequestState] = useState("idle");
   const [selectedIds, setSelectedIds] = useState([]);
-  const [pausePhase, setPausePhase] = useState(null);
   const [sortMode, setSortMode] = useState("discovery");
   const [categoryFilters, setCategoryFilters] = useState([]);
   const [activeSortSnapshot, setActiveSortSnapshot] = useState(null);
   const autoAdvanceVersionRef = useRef(0);
-  const pauseStabilityRef = useRef({ lastUpdatedAt: null, stableReads: 0 });
 
   const senderGroups = scan?.senderGroups || [];
-  const activeScan = Boolean(scan && ACTIVE_SCAN_STATES.has(scan.state) && pausePhase !== "settling");
+  const pauseSettling = scan?.state === SCAN_STATES.PAUSED && hasPendingPauseWork(scan);
+  const pausing = requestState === "pause" || pauseSettling;
+  const activeScan = Boolean(scan && ACTIVE_SCAN_STATES.has(scan.state));
   const filteredGroups = categoryFilters.length === 0
     ? senderGroups
     : senderGroups.filter((group) => categoryFilters.includes(group.category || SENDER_CATEGORIES.UNKNOWN));
@@ -574,16 +600,15 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   const visibleSelectedIds = selectedIds.filter((id) => visibleGroups.some((group) => group.id === id && isCleanupCandidate(group)));
   const reviewableGroupCount = getReviewableGroupCount(senderGroups);
   const presentation = derivePresentation(scan, gmailAuthState);
-  const pausing = pausePhase === "settling";
   const effectivePresentation = pausing
     ? {
         ...presentation,
         accent: "slate",
-        actionLabel: null,
+        actionLabel: "Pausing...",
         actionType: null,
-        body: "Finishing what's already in motion. Pidgeot isn't fetching anything new.",
+        body: "No new mail is being fetched. Finishing what's already in motion.",
         eyebrow: "Pausing",
-        title: "Settling into a pause.",
+        title: "Pausing...",
         visualMode: "paused",
       }
     : presentation;
@@ -597,59 +622,43 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   const selectedCategorySummary = categoryFilters.length === 0
     ? "All categories"
     : `${categoryFilters.length} selected`;
+  const discoveryTitle = scan?.state === SCAN_STATES.COMPLETE
+    ? "Sender groups are ready for review."
+    : pausing || scan?.state === SCAN_STATES.PAUSED || scan?.state === SCAN_STATES.RESOURCE_LIMIT_REACHED
+      ? "These are the senders Pidgeot has already found."
+      : "These are the senders Pidgeot is finding.";
+  const discoveryBody = scan?.state === SCAN_STATES.COMPLETE
+    ? null
+    : pausing
+      ? "No new mail is being fetched while already-started work settles into the current discovery set."
+      : scan?.state === SCAN_STATES.PAUSED
+        ? "Nothing new is being fetched. The current discovery set will stay still until you resume."
+        : scan?.state === SCAN_STATES.RESOURCE_LIMIT_REACHED
+          ? "This local run stopped at the development scan cap. The results below are the preserved partial discovery set."
+          : "Live discoveries stay visible here while Pidgeot keeps scanning. Sensitive financial mail stays out of cleanup.";
+  const primaryActionDisabled = !effectivePresentation.actionType || pausing || (
+    requestState !== "idle" && !(requestState === "auto-resume" && effectivePresentation.actionType === "pause")
+  );
 
   useEffect(() => {
-    if (!pausing) {
-      pauseStabilityRef.current = {
-        lastUpdatedAt: null,
-        stableReads: 0,
-      };
+    if (!pauseSettling || requestState !== "idle") {
       return undefined;
     }
 
     const timeoutId = window.setTimeout(async () => {
       try {
         const payload = await readJson("/api/scan/status");
-        const nextScan = payload.scan;
-        setScan(nextScan);
+        setScan(payload.scan);
         setErrorMessage(null);
-
-        if (!nextScan || nextScan.state !== SCAN_STATES.PAUSED) {
-          pauseStabilityRef.current = {
-            lastUpdatedAt: null,
-            stableReads: 0,
-          };
-          return;
-        }
-
-        if (pauseStabilityRef.current.lastUpdatedAt === nextScan.updatedAt) {
-          const nextStableReads = pauseStabilityRef.current.stableReads + 1;
-          pauseStabilityRef.current = {
-            lastUpdatedAt: nextScan.updatedAt,
-            stableReads: nextStableReads,
-          };
-
-          if (nextStableReads >= 1) {
-            setPausePhase(null);
-          }
-
-          return;
-        }
-
-        pauseStabilityRef.current = {
-          lastUpdatedAt: nextScan.updatedAt,
-          stableReads: 0,
-        };
       } catch (error) {
         setErrorMessage(error.message || "The latest scan status could not be loaded.");
-        setPausePhase(null);
       }
     }, 650);
 
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [pausing, scan]);
+  }, [pauseSettling, requestState, scan]);
 
   useEffect(() => {
     if (!autoAdvance || !activeScan || requestState !== "idle") {
@@ -748,20 +757,11 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
 
     try {
       autoAdvanceVersionRef.current += 1;
-      if (actionType === "pause") {
-        setPausePhase("settling");
-      }
-
-      if (actionType === "resume" || actionType === "start") {
-        setPausePhase(null);
-      }
-
       setRequestState(actionType);
       const payload = await readJson(target, { method: "POST" });
       setScan(payload.scan);
       setErrorMessage(null);
     } catch (error) {
-      setPausePhase(null);
       setErrorMessage(error.message || "The scan action could not be completed.");
     } finally {
       setRequestState("idle");
@@ -841,11 +841,15 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
                         ? "bg-emerald-300 text-slate-950"
                         : "bg-cyan-300 text-slate-950",
                   )}
-                  disabled={requestState !== "idle"}
+                    disabled={primaryActionDisabled}
                   onClick={() => handleScanAction(effectivePresentation.actionType)}
                   type="button"
                 >
-                  {requestState === effectivePresentation.actionType ? "Working…" : effectivePresentation.actionLabel}
+                    {getActionButtonLabel({
+                      actionLabel: effectivePresentation.actionLabel,
+                      pausing,
+                      requestState,
+                    })}
                 </button>
               ) : null}
               <button
@@ -875,11 +879,13 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
 
             {scan?.state === SCAN_STATES.RESOURCE_LIMIT_REACHED && scan.resourceLimit ? (
               <div className="rounded-[22px] border border-[#f4c95d]/24 bg-[#f4c95d]/10 px-4 py-3 text-sm text-[#fbe9b2]">
-                Scan stopped after {scan.resourceLimit.currentMessageCount} retained messages out of the current limit of {scan.resourceLimit.maxRetainedMessages}. Everything already discovered stays available below.
+                {scan.resourceLimit.code === "DEVELOPMENT_MESSAGE_LIMIT"
+                  ? `${scan.resourceLimit.message} Everything already discovered stays available below.`
+                  : `Scan stopped after ${scan.resourceLimit.currentMessageCount} retained messages out of the current limit of ${scan.resourceLimit.maxRetainedMessages}. Everything already discovered stays available below.`}
               </div>
             ) : null}
 
-            {scan?.state === SCAN_STATES.PARTIAL_RESULTS_AVAILABLE ? (
+            {scan?.state === SCAN_STATES.PARTIAL_RESULTS_AVAILABLE && !pausing ? (
               <div className="rounded-[22px] border border-cyan-300/24 bg-cyan-300/10 px-4 py-3 text-sm text-cyan-100">
                 Pidgeot is still looking. But it has already found sender groups you can start reviewing now.
               </div>
@@ -901,14 +907,10 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
             <p className="font-mono text-xs uppercase tracking-[0.28em] text-slate-400">
               {scan?.state === SCAN_STATES.COMPLETE ? "Ready" : "Discovery results"}
             </p>
-            <h2 className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-white">
-              {scan?.state === SCAN_STATES.COMPLETE
-                ? "Sender groups are ready for review."
-                : "These are the senders Pidgeot is finding."}
-            </h2>
-            {scan?.state !== SCAN_STATES.COMPLETE ? (
+            <h2 className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-white">{discoveryTitle}</h2>
+            {discoveryBody ? (
               <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">
-                Live discoveries stay visible here while Pidgeot keeps scanning. Sensitive financial mail stays out of cleanup.
+                {discoveryBody}
               </p>
             ) : null}
           </div>
@@ -920,17 +922,20 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
 
         <div className="mt-5 flex flex-col gap-4 rounded-[24px] border border-white/10 bg-[rgba(8,14,25,0.72)] p-4 lg:flex-row lg:items-end lg:justify-between">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-4">
-            <label className="grid gap-2">
+            <label className="grid min-w-[240px] gap-2">
               <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">Sort by</span>
-              <select
-                className="min-w-[220px] rounded-2xl border border-white/12 bg-[rgba(7,11,19,0.92)] px-4 py-3 text-sm text-white outline-none transition-colors duration-200 focus:border-cyan-300/40"
-                onChange={(event) => handleSortChange(event.target.value)}
-                value={sortMode}
-              >
-                <option value="discovery">Live discovery order</option>
-                <option value="unread-desc">Unread: highest first</option>
-                <option value="unread-asc">Unread: lowest first</option>
-              </select>
+              <span className="relative flex min-w-[240px] items-center">
+                <select
+                  className="min-h-[50px] w-full appearance-none rounded-2xl border border-white/12 bg-[rgba(7,11,19,0.92)] px-4 py-3 pr-10 text-sm text-white outline-none transition-colors duration-200 hover:border-white/24 focus:border-cyan-300/40"
+                  onChange={(event) => handleSortChange(event.target.value)}
+                  value={sortMode}
+                >
+                  <option value="discovery">Live discovery order</option>
+                  <option value="unread-desc">Unread: highest first</option>
+                  <option value="unread-asc">Unread: lowest first</option>
+                </select>
+                <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-slate-500">▾</span>
+              </span>
             </label>
 
             <details className="group relative min-w-[240px]">

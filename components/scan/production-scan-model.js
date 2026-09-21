@@ -152,10 +152,10 @@ export function derivePresentation(scan, gmailAuthState) {
         actionLabel: "Resume scan",
         actionType: "resume",
         body: scan.pauseReason === "USER_REQUESTED"
-          ? "The scan is paused. Everything Pidgeot has already found stays visible."
-          : "Scanning paused before Pidgeot could continue with the next part of your inbox.",
+          ? "Nothing new is being fetched. Everything Pidgeot has already found stays visible."
+          : "Nothing new is being fetched until Pidgeot can continue from the existing checkpoint.",
         eyebrow: "Paused",
-        title: "Scanning is paused.",
+        title: "Paused.",
         tone: "paused",
         visualMode: "paused",
       };
@@ -173,6 +173,19 @@ export function derivePresentation(scan, gmailAuthState) {
         visualMode: "settled",
       };
     case SCAN_STATES.RESOURCE_LIMIT_REACHED:
+      if (scan.resourceLimit?.code === "DEVELOPMENT_MESSAGE_LIMIT") {
+        return {
+          accent: "yellow",
+          actionLabel: "Scan again",
+          actionType: "start",
+          body: scan.resourceLimit?.message || "Showing the first 50 messages for this local test run.",
+          eyebrow: "Development limit",
+          title: "Development scan limit reached.",
+          tone: "warning",
+          visualMode: "stopped",
+        };
+      }
+
       return {
         accent: "yellow",
         actionLabel: null,
