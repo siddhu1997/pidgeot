@@ -25,7 +25,7 @@ describe("pidgeot entry model", () => {
       gmailAuthState: "IDENTITY_ONLY",
     })).toEqual(expect.objectContaining({
       stage: "connect-gmail",
-      title: "You’re signed in.",
+      title: "You’re in.",
       primaryAction: expect.objectContaining({
         action: "/api/auth/google/gmail/start",
         label: "Connect Gmail",

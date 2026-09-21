@@ -197,6 +197,7 @@ export function PidgeotEntryScreen({ authConfigured, email, gmailAuthState }) {
   const flow = getEntryFlowState({ authConfigured, email, gmailAuthState });
   const readyShell = flow.stage === "ready";
   const configState = flow.stage === "config";
+  const publicState = flow.stage === "public";
 
   return (
     <div className="mx-auto flex min-h-[calc(100dvh-3rem)] w-full max-w-6xl items-center">
@@ -213,9 +214,9 @@ export function PidgeotEntryScreen({ authConfigured, email, gmailAuthState }) {
             </div>
             <div className="space-y-3">
               <h1 className="max-w-3xl text-4xl leading-none font-semibold tracking-[-0.05em] text-white sm:text-6xl">
-                {configState ? flow.title : "Your inbox remembers every subscription you've ever made."}
+                {configState || !publicState ? flow.title : "Your inbox remembers every subscription you've ever made."}
               </h1>
-              {configState ? (
+              {configState || !publicState ? (
                 <p className="max-w-2xl text-base leading-7 text-slate-300 sm:text-lg">{flow.description}</p>
               ) : (
                 <>

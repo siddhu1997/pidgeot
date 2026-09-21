@@ -6,6 +6,13 @@ export const ACTIVE_SCAN_STATES = new Set([
   SCAN_STATES.PARTIAL_RESULTS_AVAILABLE,
 ]);
 
+export const RITUAL_STAGES = {
+  CLASSIFYING: "CLASSIFYING",
+  DISCOVERING: "DISCOVERING",
+  GROUPING: "GROUPING",
+  READY: "READY",
+};
+
 export function formatLabel(value) {
   if (!value) {
     return "Unknown";
@@ -40,6 +47,36 @@ export function getUnsubscribeLabel(unsubscribe) {
   }
 }
 
+export function deriveRitualStage(scan) {
+  if (!scan) {
+    return RITUAL_STAGES.READY;
+  }
+
+  if (scan.state === SCAN_STATES.DISCOVERING) {
+    return RITUAL_STAGES.DISCOVERING;
+  }
+
+  if (scan.state === SCAN_STATES.PARTIAL_RESULTS_AVAILABLE) {
+    const senderGroups = Array.isArray(scan.senderGroups) ? scan.senderGroups : [];
+
+    if (senderGroups.some((group) => group.category && group.category !== "UNKNOWN")) {
+      return RITUAL_STAGES.CLASSIFYING;
+    }
+
+    if (senderGroups.length > 0) {
+      return RITUAL_STAGES.GROUPING;
+    }
+
+    return RITUAL_STAGES.DISCOVERING;
+  }
+
+  if (scan.state === SCAN_STATES.COMPLETE) {
+    return RITUAL_STAGES.READY;
+  }
+
+  return null;
+}
+
 export function derivePresentation(scan, gmailAuthState) {
   if (gmailAuthState !== GMAIL_SESSION_STATES.GMAIL_READY) {
     if (gmailAuthState === GMAIL_SESSION_STATES.REAUTH_REQUIRED) {
@@ -47,9 +84,9 @@ export function derivePresentation(scan, gmailAuthState) {
         accent: "cyan",
         actionLabel: "Reconnect Gmail access",
         actionType: "gmail-upgrade",
-        body: "Pidgeot needs Gmail access again before it can continue scanning.",
+        body: "Gmail access needs to be restored before Pidgeot can continue the scan you started.",
         eyebrow: "Reconnect Gmail",
-        title: "Reconnect Gmail to resume discovery.",
+        title: "Reconnect Gmail to keep going.",
         tone: "warning",
         visualMode: "paused",
       };
@@ -59,9 +96,9 @@ export function derivePresentation(scan, gmailAuthState) {
       accent: "yellow",
       actionLabel: gmailAuthState === GMAIL_SESSION_STATES.CONSENT_REQUIRED ? "Grant Gmail access" : "Enable Gmail access",
       actionType: "gmail-upgrade",
-      body: "The scanner only starts after you explicitly grant Gmail modify access.",
+      body: "Pidgeot needs permission to look at your Gmail before the first scan can begin.",
       eyebrow: "Gmail access",
-      title: "Enable Gmail before Pidgeot can scan.",
+      title: "Connect Gmail to begin.",
       tone: "warning",
       visualMode: "idle",
     };
@@ -70,15 +107,17 @@ export function derivePresentation(scan, gmailAuthState) {
   if (!scan) {
     return {
       accent: "cyan",
-      actionLabel: "Start scan",
+      actionLabel: "Scan inbox",
       actionType: "start",
-      body: "Pidgeot will begin discovering real sender groups from your Gmail session as soon as you start.",
-      eyebrow: "Ready",
-      title: "Start the first real inbox scan.",
+      body: "Pidgeot is ready to look through your Gmail and surface the recurring senders filling your inbox.",
+      eyebrow: "First scan",
+      title: "Start your first scan.",
       tone: "ready",
       visualMode: "idle",
     };
   }
+
+  const ritualStage = deriveRitualStage(scan);
 
   switch (scan.state) {
     case SCAN_STATES.DISCOVERING:
@@ -86,9 +125,9 @@ export function derivePresentation(scan, gmailAuthState) {
         accent: "cyan",
         actionLabel: "Pause scan",
         actionType: "pause",
-        body: "Pidgeot is reading mailbox metadata and turning discovered messages into sender structure.",
-        eyebrow: "Discovery",
-        title: "Scanning your inbox now.",
+        body: "Pidgeot is looking through your inbox and gathering the recurring senders that keep showing up.",
+        eyebrow: "Discovering",
+        title: "Pidgeot is looking through your inbox.",
         tone: "active",
         visualMode: "scanning",
       };
@@ -97,9 +136,13 @@ export function derivePresentation(scan, gmailAuthState) {
         accent: "yellow",
         actionLabel: "Pause scan",
         actionType: "pause",
-        body: "Pidgeot has found sender groups already and is still scanning for more.",
-        eyebrow: "Partial results",
-        title: "Real sender groups are appearing while the scan continues.",
+        body: ritualStage === RITUAL_STAGES.CLASSIFYING
+          ? "Pidgeot is still looking, and the sender groups it has already found are settling into clearer categories."
+          : "Pidgeot is still looking, and the sender groups it has already found are already visible below.",
+        eyebrow: ritualStage === RITUAL_STAGES.CLASSIFYING ? "Classifying" : "Grouping",
+        title: ritualStage === RITUAL_STAGES.CLASSIFYING
+          ? "Pidgeot is sorting what it has already found."
+          : "Pidgeot is still looking. But results are already appearing.",
         tone: "active",
         visualMode: "scanning",
       };
@@ -109,10 +152,10 @@ export function derivePresentation(scan, gmailAuthState) {
         actionLabel: "Resume scan",
         actionType: "resume",
         body: scan.pauseReason === "USER_REQUESTED"
-          ? "The scan is paused. Everything already discovered stays visible."
-          : "Scanning paused before the next chunk of mailbox work could begin.",
+          ? "The scan is paused. Everything Pidgeot has already found stays visible."
+          : "Scanning paused before Pidgeot could continue with the next part of your inbox.",
         eyebrow: "Paused",
-        title: "Scanning has stopped temporarily.",
+        title: "Scanning is paused.",
         tone: "paused",
         visualMode: "paused",
       };
@@ -122,10 +165,10 @@ export function derivePresentation(scan, gmailAuthState) {
         actionLabel: "Scan again",
         actionType: "start",
         body: scan.senderGroups.length > 0
-          ? "The scan has settled into a stable sender surface that is ready for selection."
-          : "Pidgeot completed the scan but did not find sender groups worth surfacing yet.",
+          ? "The first scan is complete. These are the senders filling your inbox."
+          : "Pidgeot finished the scan but did not find sender groups worth surfacing yet.",
         eyebrow: "Ready",
-        title: "Your inbox has settled into reviewable sender groups.",
+        title: "Your inbox is ready to review.",
         tone: "complete",
         visualMode: "settled",
       };
@@ -134,9 +177,9 @@ export function derivePresentation(scan, gmailAuthState) {
         accent: "yellow",
         actionLabel: null,
         actionType: null,
-        body: scan.resourceLimit?.message || "Scanning stopped because the configured scan limit was reached.",
+        body: scan.resourceLimit?.message || "Scanning stopped because the current scan limit was reached.",
         eyebrow: "Scan limit reached",
-        title: "Pidgeot stopped at the scan limit and kept everything it already found.",
+        title: "Pidgeot reached the scan limit and kept what it already found.",
         tone: "warning",
         visualMode: "stopped",
       };
@@ -145,20 +188,20 @@ export function derivePresentation(scan, gmailAuthState) {
         accent: "yellow",
         actionLabel: "Reconnect Gmail access",
         actionType: "gmail-upgrade",
-        body: scan.failure?.message || "Gmail access needs to be refreshed before the scan can continue.",
+        body: scan.failure?.message || "Gmail access needs to be restored before Pidgeot can continue the scan.",
         eyebrow: "Reconnect Gmail",
-        title: "The scan stopped because Gmail needs to be reconnected.",
+        title: "Scanning stopped because Gmail needs to be reconnected.",
         tone: "warning",
         visualMode: "stopped",
       };
     case SCAN_STATES.FAILED:
       return {
         accent: "rose",
-        actionLabel: "Start new scan",
+        actionLabel: "Try scan again",
         actionType: "start",
-        body: scan.failure?.message || "The scan stopped unexpectedly before it could finish.",
+        body: scan.failure?.message || "The scan stopped before Pidgeot could finish looking through your inbox.",
         eyebrow: "Scan failed",
-        title: "Pidgeot could not finish this scan.",
+        title: "This scan stopped early.",
         tone: "error",
         visualMode: "error",
       };

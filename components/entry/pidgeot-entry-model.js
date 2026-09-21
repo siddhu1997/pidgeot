@@ -44,28 +44,28 @@ export function getEntryFlowState({ authConfigured, email, gmailAuthState }) {
   if (gmailAuthState === GMAIL_SESSION_STATES.REAUTH_REQUIRED) {
     return {
       description:
-        "Pidgeot needs Gmail access again before it can inspect your inbox and find recurring senders.",
+        "Gmail access needs to be restored before Pidgeot can continue scanning your inbox.",
       primaryAction: {
         action: "/api/auth/google/gmail/start",
         kind: "form",
         label: "Reconnect Gmail",
       },
       stage: "reauth",
-      supportingText: "Pidgeot requests the Gmail access needed for the cleanup workflow.",
-      title: "Your Google account is signed in.",
+      supportingText: "Reconnect Gmail to return to your inbox scan and the sender groups Pidgeot has already found.",
+      title: "Gmail needs to be reconnected.",
     };
   }
 
   return {
     description:
-      "Pidgeot needs Gmail access to inspect your inbox and find recurring senders before anything else happens.",
+      "Pidgeot needs access to your Gmail to find the subscriptions and recurring senders filling your inbox.",
     primaryAction: {
       action: "/api/auth/google/gmail/start",
       kind: "form",
       label: gmailAuthState === GMAIL_SESSION_STATES.CONSENT_REQUIRED ? "Connect Gmail" : "Connect Gmail",
     },
     stage: "connect-gmail",
-    supportingText: "Pidgeot requests only the Gmail access needed for the cleanup workflow.",
-    title: "You’re signed in.",
+    supportingText: "Google sign-in is complete. Gmail permission is the step that lets Pidgeot begin the first real scan.",
+    title: "You’re in.",
   };
 }

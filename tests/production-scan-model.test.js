@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   ACTIVE_SCAN_STATES,
   derivePresentation,
+  deriveRitualStage,
   formatLabel,
   getGroupTitle,
   getUnsubscribeLabel,
@@ -11,9 +12,9 @@ import {
 describe("production scan model", () => {
   it("maps gmail-ready idle state to a start action", () => {
     expect(derivePresentation(null, "GMAIL_READY")).toEqual(expect.objectContaining({
-      actionLabel: "Start scan",
+      actionLabel: "Scan inbox",
       actionType: "start",
-      title: "Start the first real inbox scan.",
+      title: "Start your first scan.",
       visualMode: "idle",
     }));
   });
@@ -25,7 +26,7 @@ describe("production scan model", () => {
     }, "GMAIL_READY")).toEqual(expect.objectContaining({
       actionLabel: "Pause scan",
       actionType: "pause",
-      title: "Real sender groups are appearing while the scan continues.",
+      title: "Pidgeot is still looking. But results are already appearing.",
       visualMode: "scanning",
     }));
   });
@@ -39,10 +40,17 @@ describe("production scan model", () => {
       state: "RESOURCE_LIMIT_REACHED",
     }, "GMAIL_READY")).toEqual(expect.objectContaining({
       actionLabel: null,
-      title: "Pidgeot stopped at the scan limit and kept everything it already found.",
+      title: "Pidgeot reached the scan limit and kept what it already found.",
       body: "Stopped at the retained message limit.",
       visualMode: "stopped",
     }));
+  });
+
+  it("derives ritual stages from the real scan payload", () => {
+    expect(deriveRitualStage(null)).toBe("READY");
+    expect(deriveRitualStage({ senderGroups: [], state: "DISCOVERING" })).toBe("DISCOVERING");
+    expect(deriveRitualStage({ senderGroups: [{ id: "group-1", category: "UNKNOWN" }], state: "PARTIAL_RESULTS_AVAILABLE" })).toBe("GROUPING");
+    expect(deriveRitualStage({ senderGroups: [{ id: "group-1", category: "PROMOTIONAL" }], state: "PARTIAL_RESULTS_AVAILABLE" })).toBe("CLASSIFYING");
   });
 
   it("formats sender-group labels from sanitized server fields", () => {
