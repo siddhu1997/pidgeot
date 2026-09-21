@@ -953,6 +953,44 @@ function getSelectionActionSummary(snapshot) {
   };
 }
 
+function BulkSelectionControls({ allVisibleSelected, disabled, onClearAll, onSelectAll, selectedCount, visibleSelectableCount }) {
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <button
+        className={classNames(
+          "rounded-2xl border px-4 py-2 text-sm font-semibold transition-colors duration-200",
+          disabled || visibleSelectableCount === 0 || allVisibleSelected
+            ? "cursor-not-allowed border-white/8 bg-black/18 text-slate-500"
+            : "border-white/12 bg-[rgba(7,11,19,0.92)] text-white hover:border-white/24 hover:bg-white/8",
+        )}
+        disabled={disabled || visibleSelectableCount === 0 || allVisibleSelected}
+        onClick={onSelectAll}
+        type="button"
+      >
+        Select all
+      </button>
+      <button
+        className={classNames(
+          "rounded-2xl border px-4 py-2 text-sm font-semibold transition-colors duration-200",
+          disabled || selectedCount === 0
+            ? "cursor-not-allowed border-white/8 bg-black/18 text-slate-500"
+            : "border-white/12 bg-[rgba(7,11,19,0.92)] text-white hover:border-white/24 hover:bg-white/8",
+        )}
+        disabled={disabled || selectedCount === 0}
+        onClick={onClearAll}
+        type="button"
+      >
+        Clear all
+      </button>
+      {selectedCount > 0 ? (
+        <p className="text-sm text-slate-400">
+          <span className="font-semibold text-white">{formatQuantity(selectedCount, "sender group")}</span> selected
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function SelectionActionButton({ active, description, disabled, label, onClick }) {
   return (
     <motion.button
@@ -1563,12 +1601,17 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
     ? activeSenderGroups
     : activeSenderGroups.filter((group) => categoryFilters.includes(group.category || SENDER_CATEGORIES.UNKNOWN));
   const visibleGroups = sortGroupsForDisplay(filteredGroups, sortMode);
+  const visibleActionableGroupIds = visibleGroups
+    .filter((group) => isGroupActionable(group))
+    .map((group) => group.id);
   const selectedGroups = selectedIds
     .map((id) => activeGroupById.get(id))
     .filter(Boolean);
   const selectedGroupIdSet = new Set(selectedGroups.map((group) => group.id));
   const selectedCount = selectedGroups.length;
   const hasSelectedRunningExecution = selectedGroups.some((group) => hasGroupRunningExecution(group));
+  const allVisibleActionableSelected = visibleActionableGroupIds.length > 0
+    && visibleActionableGroupIds.every((id) => selectedGroupIdSet.has(id));
   const visibleResultTab = activeResultTab === "done" && doneSenderGroups.length > 0
     ? "done"
     : "active";
@@ -1775,6 +1818,32 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   function clearFilters() {
     setCategoryFilters([]);
     setSortMode("discovery");
+  }
+
+  function clearSelection() {
+    if (hasSelectedRunningExecution) {
+      return;
+    }
+
+    setSelectionDecision(null);
+    setSelectedIds([]);
+  }
+
+  function selectAllVisibleActionable() {
+    if (hasSelectedRunningExecution || visibleActionableGroupIds.length === 0) {
+      return;
+    }
+
+    setSelectionDecision(null);
+    setSelectedIds((current) => {
+      const next = new Set(current.filter((id) => activeGroupById.has(id)));
+
+      visibleActionableGroupIds.forEach((id) => {
+        next.add(id);
+      });
+
+      return Array.from(next);
+    });
   }
 
   async function handleScanAction(actionType) {
@@ -2071,6 +2140,14 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
         {visibleResultTab === "active" ? (
           <div className="mt-5 flex flex-col gap-4 rounded-[24px] border border-white/10 bg-[rgba(8,14,25,0.72)] p-4 lg:flex-row lg:items-end lg:justify-between">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-4">
+              <BulkSelectionControls
+                allVisibleSelected={allVisibleActionableSelected}
+                disabled={hasSelectedRunningExecution}
+                onClearAll={clearSelection}
+                onSelectAll={selectAllVisibleActionable}
+                selectedCount={selectedCount}
+                visibleSelectableCount={visibleActionableGroupIds.length}
+              />
               <label className="grid min-w-[240px] gap-2">
                 <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">Sort by</span>
                 <span className="relative flex min-w-[240px] items-center">

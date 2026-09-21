@@ -1,5 +1,5 @@
 import { createElement } from "react";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { ProductionScanScreen } from "@/components/scan/production-scan-screen";
@@ -88,5 +88,80 @@ describe("production scan screen", () => {
     expect(screen.getByText("1 group worth a look")).toBeInTheDocument();
     expect(screen.getAllByText("store@example.com").length).toBeGreaterThan(0);
     expect(screen.getAllByText("updates@mailer.test").length).toBeGreaterThan(0);
+  });
+
+  it("bulk selects only visible actionable active sender groups and clears them", async () => {
+    render(createElement(ProductionScanScreen, {
+      authConfigured: true,
+      autoAdvance: false,
+      email: "user@example.com",
+      gmailAuthState: "GMAIL_READY",
+      initialScan: {
+        senderGroups: [
+          {
+            attention: "HIGH",
+            category: "PROMOTIONAL",
+            id: "group-1",
+            messageCount: 12,
+            representativeAddress: "store@example.com",
+            representativeDomain: "example.com",
+            senderDomains: ["example.com"],
+            unreadCount: 4,
+            unsubscribe: {
+              mechanisms: [{ id: "mechanism-1", status: "ONE_CLICK_READY" }],
+              resolutionStatus: "ONE_CLICK_READY",
+            },
+          },
+          {
+            attention: "LOW",
+            category: "UNKNOWN",
+            id: "group-2",
+            messageCount: 6,
+            representativeAddress: "updates@mailer.test",
+            representativeDomain: "mailer.test",
+            senderDomains: ["mailer.test"],
+            unreadCount: 0,
+            unsubscribe: { mechanisms: [], resolutionStatus: "UNAVAILABLE" },
+          },
+          {
+            attention: "LOW",
+            category: "SOCIAL",
+            id: "group-3",
+            messageCount: 3,
+            representativeAddress: "alerts@social.example",
+            representativeDomain: "social.example",
+            senderDomains: ["social.example"],
+            unreadCount: 0,
+            unsubscribe: { mechanisms: [], resolutionStatus: "UNAVAILABLE" },
+            workflow: {
+              cleanupEligibleCount: 0,
+              cleanupExecution: {
+                execution: {
+                  summary: { successfulCount: 2 },
+                },
+                state: "COMPLETED",
+              },
+              unsubscribeHandledLocally: true,
+            },
+          },
+        ],
+        state: "COMPLETE",
+      },
+      workflowExecutionMode: "SIMULATED",
+    }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+
+    expect(screen.getByRole("heading", { name: "1 sender selected" })).toBeInTheDocument();
+    expect(screen.getByText("What would you like Pidgeot to do with these senders?")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Clear all" })).toBeEnabled();
+    expect(screen.getByRole("tab", { name: /Done 1/i })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear all" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("heading", { name: "1 sender selected" })).not.toBeInTheDocument();
+    });
+    expect(screen.getAllByText("0").length).toBeGreaterThan(0);
   });
 });
