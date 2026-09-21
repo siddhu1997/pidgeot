@@ -84,6 +84,11 @@ function isExecutionRunning(execution) {
   return execution?.state === WORKFLOW_EXECUTION_STATES.RUNNING;
 }
 
+function hasGroupRunningExecution(group) {
+  return isExecutionRunning(group?.workflow?.unsubscribeExecution)
+    || isExecutionRunning(group?.workflow?.cleanupExecution);
+}
+
 function getCleanupExecutionDescription(execution) {
   const summary = execution?.execution?.summary || null;
   const successfulCount = summary?.successfulCount || 0;
@@ -229,6 +234,13 @@ function hasCompletedUnsubscribeAction(group) {
       unsubscribeExecution.state === WORKFLOW_EXECUTION_STATES.PARTIAL_SUCCESS
     )
   );
+}
+
+function hasSuccessfulUnsubscribeSimulation(group, execution) {
+  const summary = execution?.execution?.summary || null;
+  const completedSuccessCount = (summary?.successfulCount || 0) + (summary?.alreadyCompletedCount || 0);
+
+  return Boolean(group?.workflow?.unsubscribeHandledLocally) || completedSuccessCount > 0;
 }
 
 function hasRemainingCleanupAction(group) {
@@ -498,6 +510,139 @@ function getActionabilityTooltip(label, unsubscribe) {
   return ACTIONABILITY_TOOLTIPS[label] || null;
 }
 
+function getUnsubscribeSeverVisualState({ armed, execution, group }) {
+  if (execution?.state === WORKFLOW_EXECUTION_STATES.RUNNING) {
+    return execution.phase === WORKFLOW_EXECUTION_PROGRESS_PHASES.QUEUED ? "queued" : "processing";
+  }
+
+  if (execution?.state === WORKFLOW_EXECUTION_STATES.COMPLETED) {
+    return hasSuccessfulUnsubscribeSimulation(group, execution) ? "completed" : "manual";
+  }
+
+  if (execution?.state === WORKFLOW_EXECUTION_STATES.PARTIAL_SUCCESS) {
+    return hasSuccessfulUnsubscribeSimulation(group, execution) ? "partial" : "failed";
+  }
+
+  if (execution?.state === WORKFLOW_EXECUTION_STATES.MANUAL_ACTION_REQUIRED) {
+    return "manual";
+  }
+
+  if (execution?.state === WORKFLOW_EXECUTION_STATES.PAUSED) {
+    return "paused";
+  }
+
+  if (
+    execution?.state === WORKFLOW_EXECUTION_STATES.FAILED
+    || execution?.state === WORKFLOW_EXECUTION_STATES.REAUTH_REQUIRED
+  ) {
+    return "failed";
+  }
+
+  return armed ? "armed" : null;
+}
+
+function getUnsubscribeSeverCopy(visualState) {
+  if (visualState === "queued") {
+    return {
+      badge: "Queued",
+      body: "The simulated unsubscribe request is lined up locally and waiting to begin.",
+      headline: "Unsubscribe queued",
+      tone: "border-cyan-300/16 bg-cyan-300/8",
+      toneAccent: "text-cyan-100",
+      toneLine: "text-[#f4c95d]",
+    };
+  }
+
+  if (visualState === "processing") {
+    return {
+      badge: "Severing",
+      body: "Submitting a local-only unsubscribe request and breaking the sender's active path.",
+      headline: "Severing unsubscribe path",
+      tone: "border-cyan-300/20 bg-cyan-300/10",
+      toneAccent: "text-cyan-100",
+      toneLine: "text-[#f4c95d]",
+    };
+  }
+
+  if (visualState === "completed") {
+    return {
+      badge: "Submitted",
+      body: "Simulated locally only. Gmail and sender endpoints were not touched.",
+      headline: "Unsubscribe request submitted",
+      tone: "border-emerald-300/18 bg-emerald-300/10",
+      toneAccent: "text-emerald-100",
+      toneLine: "text-emerald-200",
+    };
+  }
+
+  if (visualState === "partial") {
+    return {
+      badge: "Submitted",
+      body: "Automatic-capable paths were simulated. Any remaining unsubscribe work is still manual.",
+      headline: "Unsubscribe request submitted",
+      tone: "border-[#f4c95d]/20 bg-[#f4c95d]/10",
+      toneAccent: "text-[#fbe9b2]",
+      toneLine: "text-[#f4c95d]",
+    };
+  }
+
+  if (visualState === "failed") {
+    return {
+      badge: "Failed",
+      body: "The simulated unsubscribe request did not complete. Nothing was sent to sender endpoints.",
+      headline: "Unsubscribe request failed",
+      tone: "border-rose-300/20 bg-rose-300/10",
+      toneAccent: "text-rose-100",
+      toneLine: "text-rose-200",
+    };
+  }
+
+  if (visualState === "paused") {
+    return {
+      badge: "Paused",
+      body: "Resume the scan to continue this local-only unsubscribe simulation.",
+      headline: "Unsubscribe paused",
+      tone: "border-white/10 bg-white/5",
+      toneAccent: "text-slate-100",
+      toneLine: "text-slate-300",
+    };
+  }
+
+  if (visualState === "manual") {
+    return {
+      badge: "Manual",
+      body: "This sender still needs a manual unsubscribe step. No automatic sever path was available.",
+      headline: "Manual unsubscribe still required",
+      tone: "border-white/10 bg-white/5",
+      toneAccent: "text-slate-100",
+      toneLine: "text-slate-300",
+    };
+  }
+
+  return {
+    badge: "Linked",
+    body: "This sender is linked to the unsubscribe action. Execute to simulate the break locally.",
+    headline: "Ready to sever unsubscribe path",
+    tone: "border-white/10 bg-white/5",
+    toneAccent: "text-slate-100",
+    toneLine: "text-[#f4c95d]",
+  };
+}
+
+function shouldShowUnsubscribeSeverSurface({ armedActionType, execution, group }) {
+  if (armedActionType !== "unsubscribe" && !hasExecutionStarted(execution)) {
+    return false;
+  }
+
+  const unsubscribeAvailability = getGroupUnsubscribeAvailability(group);
+
+  return unsubscribeAvailability.automaticCount > 0
+    || hasSuccessfulUnsubscribeSimulation(group, execution)
+    || isExecutionRunning(execution)
+    || execution?.state === WORKFLOW_EXECUTION_STATES.FAILED
+    || execution?.state === WORKFLOW_EXECUTION_STATES.PAUSED;
+}
+
 function TooltipTag({ children, className, description }) {
   return (
     <span className="group/tooltip relative inline-flex">
@@ -516,6 +661,137 @@ function TooltipTag({ children, className, description }) {
         </span>
       ) : null}
     </span>
+  );
+}
+
+function UnsubscribeSeverSurface({ armed, execution, group, reducedMotion }) {
+  const visualState = getUnsubscribeSeverVisualState({ armed, execution, group });
+
+  if (!visualState) {
+    return null;
+  }
+
+  const copy = getUnsubscribeSeverCopy(visualState);
+  const broken = visualState === "processing" || visualState === "completed" || visualState === "partial";
+  const restoring = visualState === "failed" || visualState === "paused" || visualState === "manual";
+  const title = getGroupTitle(group);
+
+  return (
+    <motion.div
+      className={classNames("mt-4 rounded-[20px] border px-3 py-3", copy.tone)}
+      initial={reducedMotion ? false : { opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: reducedMotion ? 0 : 0.22 }}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-400">Unsubscribe path</p>
+        <span className={classNames("rounded-full border border-current/18 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.16em]", copy.toneAccent)}>
+          {copy.badge}
+        </span>
+      </div>
+
+      <div className="mt-3 flex items-center gap-3">
+        <motion.div
+          className="min-w-0 rounded-full border border-white/12 bg-[rgba(7,11,19,0.72)] px-3 py-2"
+          animate={reducedMotion || visualState !== "processing"
+            ? { scale: 1, y: 0 }
+            : { scale: [1, 1.02, 1], y: [0, -1, 0] }}
+          transition={reducedMotion ? { duration: 0 } : { duration: 0.86, ease: [0.22, 1, 0.36, 1] }}
+        >
+          <p className="truncate text-sm font-medium text-white">{title}</p>
+          <p className="truncate text-[11px] text-slate-400">sender</p>
+        </motion.div>
+
+        <div className={classNames("relative h-10 flex-1 min-w-[88px]", copy.toneLine)}>
+          <motion.span
+            className="absolute left-0 top-1/2 h-px w-[calc(50%-0.65rem)] -translate-y-1/2 rounded-full bg-current"
+            style={{ originX: 1 }}
+            animate={reducedMotion
+              ? { opacity: broken ? 0.55 : 1, scaleX: broken ? 0.36 : 1 }
+              : broken
+                ? { opacity: [1, 0.9, 0.55], scaleX: [1, 0.72, 0.36] }
+                : restoring
+                  ? { opacity: 1, scaleX: 1 }
+                  : visualState === "queued"
+                    ? { opacity: [0.68, 1, 0.68], scaleX: 1 }
+                    : { opacity: 1, scaleX: 1 }}
+            transition={reducedMotion
+              ? { duration: 0 }
+              : broken
+                ? { duration: 0.88, ease: [0.22, 1, 0.36, 1] }
+                : visualState === "queued"
+                  ? { duration: 0.52, ease: "easeInOut", repeat: Infinity }
+                  : { duration: 0.22 }}
+          />
+          <motion.span
+            className="absolute right-0 top-1/2 h-px w-[calc(50%-0.65rem)] -translate-y-1/2 rounded-full bg-current"
+            style={{ originX: 0 }}
+            animate={reducedMotion
+              ? { opacity: broken ? 0.55 : 1, scaleX: broken ? 0.36 : 1 }
+              : broken
+                ? { opacity: [1, 0.9, 0.55], scaleX: [1, 0.68, 0.32] }
+                : restoring
+                  ? { opacity: 1, scaleX: 1 }
+                  : visualState === "queued"
+                    ? { opacity: [0.68, 1, 0.68], scaleX: 1 }
+                    : { opacity: 1, scaleX: 1 }}
+            transition={reducedMotion
+              ? { duration: 0 }
+              : broken
+                ? { duration: 0.88, ease: [0.22, 1, 0.36, 1] }
+                : visualState === "queued"
+                  ? { duration: 0.52, ease: "easeInOut", repeat: Infinity }
+                  : { duration: 0.22 }}
+          />
+          <motion.span
+            className="absolute left-1/2 top-1/2 h-5 w-[2px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-current"
+            animate={reducedMotion
+              ? { opacity: broken ? 1 : 0.18, rotate: broken ? 38 : 0, scaleY: broken ? 1 : 0.65 }
+              : broken
+                ? { opacity: [0.22, 1, 1], rotate: [0, 22, 38], scaleY: [0.65, 1.12, 1] }
+                : restoring
+                  ? { opacity: 0.32, rotate: 0, scaleY: 0.72 }
+                  : visualState === "queued"
+                    ? { opacity: [0.16, 0.5, 0.16], rotate: [0, 8, 0], scaleY: [0.65, 0.8, 0.65] }
+                    : { opacity: 0.18, rotate: 0, scaleY: 0.65 }}
+            transition={reducedMotion
+              ? { duration: 0 }
+              : broken
+                ? { duration: 0.96, ease: [0.16, 1, 0.3, 1] }
+                : visualState === "queued"
+                  ? { duration: 0.58, ease: "easeInOut", repeat: Infinity }
+                  : { duration: 0.22 }}
+          />
+        </div>
+
+        <motion.div
+          className={classNames(
+            "rounded-full border px-3 py-2 text-right",
+            visualState === "failed"
+              ? "border-rose-300/24 bg-rose-300/12"
+              : visualState === "completed"
+                ? "border-emerald-300/24 bg-emerald-300/12"
+                : "border-white/12 bg-[rgba(7,11,19,0.72)]",
+          )}
+          animate={reducedMotion
+            ? { scale: 1, x: broken ? 4 : 0 }
+            : visualState === "processing"
+              ? { scale: [1, 1.02, 1], x: [0, 2, 6] }
+              : broken
+                ? { scale: 1, x: 6 }
+                : { scale: 1, x: 0 }}
+          transition={reducedMotion ? { duration: 0 } : { duration: 0.9, ease: [0.22, 1, 0.36, 1] }}
+        >
+          <p className="text-sm font-medium text-white">Unsubscribe</p>
+          <p className="text-[11px] text-slate-400">request</p>
+        </motion.div>
+      </div>
+
+      <div className="mt-3">
+        <p className={classNames("font-medium", copy.toneAccent)}>{copy.headline}</p>
+        <p className="mt-1 text-xs leading-5 text-slate-300">{copy.body}</p>
+      </div>
+    </motion.div>
   );
 }
 
@@ -679,29 +955,30 @@ function getSelectionActionSummary(snapshot) {
 
 function SelectionActionButton({ active, description, disabled, label, onClick }) {
   return (
-    <button
+    <motion.button
       aria-pressed={active}
       className={classNames(
-        "flex min-h-[72px] min-w-[220px] flex-1 flex-col items-start justify-center rounded-[22px] border px-4 py-3 text-left transition-colors duration-200",
+        "flex min-h-[72px] min-w-[220px] flex-1 flex-col items-start justify-center rounded-[22px] border px-4 py-3 text-left transition-[background-color,border-color,transform] duration-200",
         disabled
           ? "cursor-not-allowed border-white/8 bg-black/20 text-slate-500"
           : active
-            ? "border-cyan-300/28 bg-cyan-300/12 text-white"
+            ? "border-cyan-300/28 bg-cyan-300/12 text-white shadow-[0_10px_22px_rgba(8,14,25,0.2)]"
             : "border-white/12 bg-[rgba(7,11,19,0.88)] text-white hover:border-white/24 hover:bg-white/8",
       )}
       disabled={disabled}
       onClick={onClick}
       type="button"
+      whileTap={disabled ? undefined : { scale: 0.985 }}
     >
       <span className="text-sm font-semibold">{label}</span>
       <span className={classNames("mt-1 text-xs leading-5", disabled ? "text-slate-500" : active ? "text-cyan-100" : "text-slate-400")}>
         {description}
       </span>
-    </button>
+    </motion.button>
   );
 }
 
-function SelectionActionBar({ actionSummary, activeDecision, executionRequestState, executionSummary, onDecisionChange, onExecute, reducedMotion, selectedCount, workflowExecutionMode }) {
+function SelectionActionBar({ actionSummary, activeDecision, executionRequestState, executionSummary, hasRunningExecution, onDecisionChange, onExecute, reducedMotion, selectedCount, workflowExecutionMode }) {
   const selectionLabel = formatQuantity(selectedCount, "sender");
   const executionButtonLabel = workflowExecutionMode === "SIMULATED"
     ? activeDecision === "unsubscribe"
@@ -710,7 +987,8 @@ function SelectionActionBar({ actionSummary, activeDecision, executionRequestSta
     : activeDecision === "unsubscribe"
       ? "Unsubscribe selected"
       : "Delete unread";
-  const executeDisabled = !activeDecision || executionRequestState !== "idle" || executionSummary?.hasRunning;
+  const actionLocked = executionRequestState !== "idle" || hasRunningExecution;
+  const executeDisabled = !activeDecision || actionLocked;
 
   return (
     <motion.section
@@ -743,14 +1021,14 @@ function SelectionActionBar({ actionSummary, activeDecision, executionRequestSta
         <SelectionActionButton
           active={activeDecision === "unsubscribe"}
           description={actionSummary.unsubscribe.description}
-          disabled={!actionSummary.unsubscribe.enabled || executionRequestState !== "idle"}
+          disabled={!actionSummary.unsubscribe.enabled || actionLocked}
           label={actionSummary.unsubscribe.label}
           onClick={() => onDecisionChange(activeDecision === "unsubscribe" ? null : "unsubscribe")}
         />
         <SelectionActionButton
           active={activeDecision === "cleanup"}
           description={actionSummary.cleanup.description}
-          disabled={!actionSummary.cleanup.enabled || executionRequestState !== "idle"}
+          disabled={!actionSummary.cleanup.enabled || actionLocked}
           label={actionSummary.cleanup.label}
           onClick={() => onDecisionChange(activeDecision === "cleanup" ? null : "cleanup")}
         />
@@ -770,24 +1048,25 @@ function SelectionActionBar({ actionSummary, activeDecision, executionRequestSta
             <p className="mt-2 text-slate-200">{executionSummary.headline}</p>
           ) : null}
           <div className="mt-3 flex flex-wrap gap-3">
-            <button
+            <motion.button
               className={classNames(
-                "rounded-2xl px-4 py-2.5 text-sm font-semibold transition-colors duration-200",
+                "rounded-2xl border px-4 py-2.5 text-sm font-semibold transition-[background-color,border-color,transform] duration-200",
                 executeDisabled
                   ? "cursor-not-allowed border border-white/10 bg-white/6 text-slate-500"
-                  : "bg-[#f4c95d] text-slate-950 hover:bg-[#f7d77d]",
+                  : "border-[#f4c95d]/40 bg-[#f4c95d] text-slate-950 shadow-[0_12px_26px_rgba(0,0,0,0.22)] hover:border-[#f7d77d] hover:bg-[#f7d77d]",
               )}
               disabled={executeDisabled}
               onClick={onExecute}
               type="button"
+              whileTap={executeDisabled ? undefined : { scale: 0.985 }}
             >
               {executionRequestState === "submitting"
                 ? "Queueing..."
-                : executionSummary?.hasRunning
+                : hasRunningExecution
                   ? "Execution in progress"
                   : executionButtonLabel}
-            </button>
-            {executionSummary?.hasRunning ? (
+            </motion.button>
+            {hasRunningExecution ? (
               <span className="inline-flex items-center rounded-full border border-cyan-300/24 bg-cyan-300/10 px-3 py-2 text-xs font-medium text-cyan-100">
                 Queued and processing follow the live workflow state.
               </span>
@@ -1015,7 +1294,7 @@ function ScanRitualSurface({ mode, reducedMotion, scan, senderGroups }) {
   );
 }
 
-function SenderGroupCard({ group, mode = "active", reducedMotion, selected, onToggle }) {
+function SenderGroupCard({ armedActionType = null, group, mode = "active", reducedMotion, selected, onToggle }) {
   const title = getGroupTitle(group);
   const domainChips = group.senderDomains.slice(0, 3);
   const sensitiveFinancial = isSensitiveFinancialGroup(group);
@@ -1027,9 +1306,14 @@ function SenderGroupCard({ group, mode = "active", reducedMotion, selected, onTo
   const unsubscribeAvailability = getGroupUnsubscribeAvailability(group);
   const unsubscribeExecution = group?.workflow?.unsubscribeExecution || null;
   const cleanupExecution = group?.workflow?.cleanupExecution || null;
+  const showUnsubscribeSeverSurface = !done && shouldShowUnsubscribeSeverSurface({
+    armedActionType,
+    execution: unsubscribeExecution,
+    group,
+  });
   const doneSummary = done ? getDoneSummary(group) : null;
   const executionCards = [
-    unsubscribeExecution && hasExecutionStarted(unsubscribeExecution)
+    !showUnsubscribeSeverSurface && unsubscribeExecution && hasExecutionStarted(unsubscribeExecution)
       ? {
           actionType: "unsubscribe",
           description: getUnsubscribeExecutionDescription(group, unsubscribeExecution),
@@ -1176,6 +1460,15 @@ function SenderGroupCard({ group, mode = "active", reducedMotion, selected, onTo
           </div>
         ) : null}
 
+        {showUnsubscribeSeverSurface ? (
+          <UnsubscribeSeverSurface
+            armed={armedActionType === "unsubscribe" && !hasExecutionStarted(unsubscribeExecution)}
+            execution={unsubscribeExecution}
+            group={group}
+            reducedMotion={reducedMotion}
+          />
+        ) : null}
+
         {doneSummary ? (
           <div className="mt-4 rounded-[20px] border border-white/10 bg-white/5 px-3 py-3 text-sm text-slate-200">
             <p className="font-medium text-white">{doneSummary}</p>
@@ -1275,6 +1568,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
     .filter(Boolean);
   const selectedGroupIdSet = new Set(selectedGroups.map((group) => group.id));
   const selectedCount = selectedGroups.length;
+  const hasSelectedRunningExecution = selectedGroups.some((group) => hasGroupRunningExecution(group));
   const visibleResultTab = activeResultTab === "done" && doneSenderGroups.length > 0
     ? "done"
     : "active";
@@ -1291,7 +1585,6 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
         groups: selectedGroups,
       })
     : null;
-  const activeDecisionHasRunningExecution = Boolean(decisionExecutionSummary?.hasRunning);
   const reviewableGroupCount = getReviewableGroupCount(senderGroups);
   const presentation = derivePresentation(scan, gmailAuthState);
   const effectivePresentation = pausing
@@ -1368,7 +1661,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   }, [scan?.scanId, scan?.updatedAt, selectedCount]);
 
   useEffect(() => {
-    if (!scan?.scanId || !activeDecisionHasRunningExecution) {
+    if (!scan?.scanId || !hasSelectedRunningExecution) {
       return undefined;
     }
 
@@ -1398,7 +1691,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
       cancelled = true;
       window.clearTimeout(timeoutId);
     };
-  }, [activeDecisionHasRunningExecution, scan?.scanId, selectionWorkflow]);
+  }, [hasSelectedRunningExecution, scan?.scanId, selectionWorkflow]);
 
   useEffect(() => {
     if (!pauseSettling || requestState !== "idle") {
@@ -1524,7 +1817,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   function toggleSelection(groupId) {
     const group = activeGroupById.get(groupId);
 
-    if (!isGroupActionable(group)) {
+    if (!isGroupActionable(group) || hasSelectedRunningExecution) {
       return;
     }
 
@@ -1538,7 +1831,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   }
 
   async function handleSelectionExecution() {
-    if (!activeSelectionDecision || executionRequestState !== "idle") {
+    if (!activeSelectionDecision || executionRequestState !== "idle" || hasSelectedRunningExecution) {
       return;
     }
 
@@ -1765,6 +2058,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
               activeDecision={activeSelectionDecision}
               executionRequestState={executionRequestState}
               executionSummary={decisionExecutionSummary}
+              hasRunningExecution={hasSelectedRunningExecution}
               onDecisionChange={setSelectionDecision}
               onExecute={handleSelectionExecution}
               reducedMotion={reducedMotion}
@@ -1879,6 +2173,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
                     transition={{ duration: reducedMotion ? 0 : 0.22 }}
                   >
                     <SenderGroupCard
+                      armedActionType={selectedGroupIdSet.has(group.id) ? activeSelectionDecision : null}
                       group={group}
                       mode={visibleResultTab === "done" ? "done" : "active"}
                       onToggle={() => toggleSelection(group.id)}
