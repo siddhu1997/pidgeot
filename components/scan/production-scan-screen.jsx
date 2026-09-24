@@ -121,33 +121,36 @@ function getCleanupExecutionDescription(execution) {
   const summary = execution?.execution?.summary || null;
   const successfulCount = summary?.successfulCount || 0;
   const remainingEligibleCount = summary?.remainingEligibleCount || 0;
+  const totalEligibleCount = summary?.totalEligibleCount || (successfulCount + remainingEligibleCount);
 
   if (execution?.state === WORKFLOW_EXECUTION_STATES.RUNNING) {
     if (execution.phase === WORKFLOW_EXECUTION_PROGRESS_PHASES.QUEUED) {
       return execution.queueSize > 1
         ? `Queued ${execution.queuePosition} of ${execution.queueSize}`
-        : "Queued for simulated cleanup";
+        : "Queued to move unread mail to Trash";
     }
 
-    return "Removing unread messages from the local discovery view only.";
+    return "Moving unread messages to Trash.";
   }
 
   if (execution?.state === WORKFLOW_EXECUTION_STATES.COMPLETED) {
-    return successfulCount > 0
-      ? `Removed ${formatQuantity(successfulCount, "message")} from this local discovery view.`
-      : "No unread messages remained for cleanup.";
+    if (successfulCount <= 0) {
+      return "No unread messages remained for cleanup.";
+    }
+
+    return "Moved to Trash";
   }
 
   if (execution?.state === WORKFLOW_EXECUTION_STATES.PARTIAL_SUCCESS) {
-    return `${formatQuantity(successfulCount, "message")} removed · ${formatQuantity(remainingEligibleCount, "message")} left untouched`;
+    return `${successfulCount} of ${totalEligibleCount} moved to Trash`;
   }
 
   if (execution?.state === WORKFLOW_EXECUTION_STATES.PAUSED) {
-    return "Paused before local cleanup could finish. Resume the scan to continue.";
+    return "Paused before unread mail could be moved to Trash.";
   }
 
   if (execution?.state === WORKFLOW_EXECUTION_STATES.FAILED) {
-    return "Local cleanup did not complete for this sender.";
+    return "Couldn't move to Trash";
   }
 
   return null;
@@ -162,36 +165,36 @@ function getUnsubscribeExecutionDescription(group, execution) {
     if (execution.phase === WORKFLOW_EXECUTION_PROGRESS_PHASES.QUEUED) {
       return execution.queueSize > 1
         ? `Queued ${execution.queuePosition} of ${execution.queueSize}`
-        : "Queued for simulated unsubscribe";
+        : "Queued to submit unsubscribe request";
     }
 
-    return "Simulating unsubscribe handling without contacting the sender.";
+    return "Submitting unsubscribe request.";
   }
 
   if (execution?.state === WORKFLOW_EXECUTION_STATES.COMPLETED) {
     return successfulCount > 0
-      ? "Handled locally in simulation. Gmail and sender endpoints were not touched."
+      ? "Unsubscribe request submitted"
       : "Nothing needed an automatic unsubscribe path.";
   }
 
   if (execution?.state === WORKFLOW_EXECUTION_STATES.PARTIAL_SUCCESS) {
     if (successfulCount > 0 && manualCount > 0) {
-      return `${formatQuantity(successfulCount, "path")} simulated · ${formatQuantity(manualCount, "path")} still manual`;
+      return `${formatQuantity(successfulCount, "unsubscribe request")} submitted · ${formatQuantity(manualCount, "path")} still manual`;
     }
 
-    return "Some unsubscribe work completed locally before execution stopped.";
+    return "Some unsubscribe requests were submitted.";
   }
 
   if (execution?.state === WORKFLOW_EXECUTION_STATES.MANUAL_ACTION_REQUIRED) {
-    return "This sender stays manual-only in simulation.";
+    return "This sender still needs a manual unsubscribe step.";
   }
 
   if (execution?.state === WORKFLOW_EXECUTION_STATES.PAUSED) {
-    return "Paused before unsubscribe simulation could finish. Resume the scan to continue.";
+    return "Paused before the unsubscribe request could finish.";
   }
 
   if (group?.workflow?.unsubscribeHandledLocally) {
-    return "Handled locally in simulation. Gmail and sender endpoints were not touched.";
+    return "Unsubscribe request submitted";
   }
 
   return null;
@@ -218,7 +221,9 @@ function getExecutionTone(execution) {
 }
 
 function getExecutionLabel(actionType, execution) {
-  const prefix = actionType === "unsubscribe" ? "Unsubscribe" : "Delete unread";
+  const prefix = actionType === "unsubscribe"
+    ? "Unsubscribe"
+    : "Move unread to Trash";
 
   if (execution?.state === WORKFLOW_EXECUTION_STATES.RUNNING) {
     return `${prefix} · ${EXECUTION_RUNNING_PHASE_COPY[execution.phase] || "Running"}`;
@@ -324,15 +329,15 @@ function getDoneSummary(group) {
   if (group?.workflow?.manualHandledLocally) {
     fragments.push("Marked as handled");
   } else if (hasCompletedUnsubscribeAction(group)) {
-    fragments.push("Unsubscribed");
+    fragments.push("Unsubscribe request submitted");
   }
 
   if (cleanupSuccessfulCount > 0) {
-    fragments.push(`${formatCount(cleanupSuccessfulCount)} unread handled`);
+    fragments.push(`${formatCount(cleanupSuccessfulCount)} moved to Trash`);
   }
 
   if (fragments.length === 0) {
-    return "Handled in simulation";
+    return "Handled";
   }
 
   return fragments.join(" · ");
@@ -591,7 +596,7 @@ function getUnsubscribeSeverCopy(visualState) {
   if (visualState === "queued") {
     return {
       badge: "Queued",
-      body: "The simulated unsubscribe request is lined up locally and waiting to begin.",
+      body: "The unsubscribe request is lined up and waiting to begin.",
       headline: "Unsubscribe queued",
       tone: "border-cyan-300/16 bg-cyan-300/8",
       toneAccent: "text-cyan-100",
@@ -602,8 +607,8 @@ function getUnsubscribeSeverCopy(visualState) {
   if (visualState === "processing") {
     return {
       badge: "Severing",
-      body: "Submitting a local-only unsubscribe request and breaking the sender's active path.",
-      headline: "Severing unsubscribe path",
+      body: "Submitting unsubscribe request.",
+      headline: "Submitting unsubscribe request",
       tone: "border-cyan-300/20 bg-cyan-300/10",
       toneAccent: "text-cyan-100",
       toneLine: "text-[#f4c95d]",
@@ -613,7 +618,7 @@ function getUnsubscribeSeverCopy(visualState) {
   if (visualState === "completed") {
     return {
       badge: "Submitted",
-      body: "Simulated locally only. Gmail and sender endpoints were not touched.",
+      body: "Unsubscribe request submitted.",
       headline: "Unsubscribe request submitted",
       tone: "border-emerald-300/18 bg-emerald-300/10",
       toneAccent: "text-emerald-100",
@@ -624,7 +629,7 @@ function getUnsubscribeSeverCopy(visualState) {
   if (visualState === "partial") {
     return {
       badge: "Submitted",
-      body: "Automatic-capable paths were simulated. Any remaining unsubscribe work is still manual.",
+      body: "Some unsubscribe requests were submitted. Remaining work is still manual.",
       headline: "Unsubscribe request submitted",
       tone: "border-[#f4c95d]/20 bg-[#f4c95d]/10",
       toneAccent: "text-[#fbe9b2]",
@@ -635,7 +640,7 @@ function getUnsubscribeSeverCopy(visualState) {
   if (visualState === "failed") {
     return {
       badge: "Failed",
-      body: "The simulated unsubscribe request did not complete. Nothing was sent to sender endpoints.",
+      body: "The unsubscribe request did not complete.",
       headline: "Unsubscribe request failed",
       tone: "border-rose-300/20 bg-rose-300/10",
       toneAccent: "text-rose-100",
@@ -646,7 +651,7 @@ function getUnsubscribeSeverCopy(visualState) {
   if (visualState === "paused") {
     return {
       badge: "Paused",
-      body: "Resume the scan to continue this local-only unsubscribe simulation.",
+      body: "Resume the scan to continue the unsubscribe request.",
       headline: "Unsubscribe paused",
       tone: "border-white/10 bg-white/5",
       toneAccent: "text-slate-100",
@@ -667,7 +672,7 @@ function getUnsubscribeSeverCopy(visualState) {
 
   return {
     badge: "Linked",
-    body: "This sender is linked to the unsubscribe action. Execute to simulate the break locally.",
+    body: "This sender is linked to the unsubscribe action. Execute to submit an unsubscribe request.",
     headline: "Ready to sever unsubscribe path",
     tone: "border-white/10 bg-white/5",
     toneAccent: "text-slate-100",
@@ -886,8 +891,13 @@ function getGroupUnsubscribePath(group) {
   };
 }
 
+function hasResolvedAutomaticUnsubscribe(group) {
+  return Boolean(group?.workflow?.unsubscribeHandledLocally)
+    || group?.workflow?.unsubscribeExecution?.state === WORKFLOW_EXECUTION_STATES.COMPLETED;
+}
+
 function getGroupUnsubscribeAvailability(group) {
-  if (group?.workflow?.unsubscribeHandledLocally || group?.workflow?.manualHandledLocally) {
+  if (hasResolvedAutomaticUnsubscribe(group) || group?.workflow?.manualHandledLocally) {
     return {
       available: false,
       automaticCount: 0,
@@ -1076,7 +1086,7 @@ function getSelectionActionSummary(snapshot) {
         ? `${formatQuantity(snapshot.cleanupEligibleGroupCount, "sender")} · ${formatQuantity(snapshot.cleanupEligibleUnreadCount, "unread message")}`
         : "No unread cleanup available.",
       enabled: cleanupEnabled,
-      label: "Delete unread",
+      label: "Move unread to Trash",
     },
     unsubscribe: {
       description: unsubscribeDetail,
@@ -1556,7 +1566,6 @@ function SelectionActionBar({
   onOpenManualDetails,
   reducedMotion,
   selectedCount,
-  workflowExecutionMode,
 }) {
   const selectionLabel = formatQuantity(selectedCount, "sender");
   const unsubscribeButtonDescription = actionSummary.unsubscribe.enabled
@@ -1566,13 +1575,9 @@ function SelectionActionBar({
     ? actionSummary.cleanup.description
     : "No unread cleanup available.";
   const manualOnlyUnsubscribe = !actionSummary.unsubscribe.enabled && actionSummary.unsubscribe.manualGroupCount > 0;
-  const executionButtonLabel = workflowExecutionMode === "SIMULATED"
-    ? activeDecision === "unsubscribe"
-      ? "Run simulated unsubscribe"
-      : "Run simulated delete unread"
-    : activeDecision === "unsubscribe"
-      ? "Unsubscribe selected"
-      : "Delete unread";
+  const executionButtonLabel = activeDecision === "unsubscribe"
+    ? "Submit unsubscribe request"
+    : "Move unread to Trash";
   const actionLocked = executionRequestState !== "idle" || hasRunningExecution;
   const executeDisabled = !activeDecision || actionLocked;
   const recommendedAction = getRecommendedSelectionAction(actionSummary);
@@ -1641,11 +1646,6 @@ function SelectionActionBar({
           >
             Review manually
           </button>
-        ) : null}
-        {workflowExecutionMode === "SIMULATED" ? (
-          <span className="inline-flex items-center rounded-full border border-cyan-300/24 bg-cyan-300/10 px-3 py-2 text-xs font-medium text-cyan-100">
-            SIMULATION MODE — Gmail won&apos;t be changed.
-          </span>
         ) : null}
         {executionSummary?.headline ? (
           <span className="inline-flex items-center rounded-full border border-white/10 bg-white/6 px-3 py-2 text-xs font-medium text-slate-200">
@@ -1728,6 +1728,26 @@ function isPostScanCompactEligible(scan) {
   );
 }
 
+function getProductScanLimitMessage(resourceLimit) {
+  if (!resourceLimit) {
+    return null;
+  }
+
+  const count = resourceLimit.maxRetainedMessages;
+
+  if (
+    Number.isFinite(count)
+    && (
+      resourceLimit.code === "DEVELOPMENT_MESSAGE_LIMIT"
+      || /development|local test|test run|playground|simulation/i.test(String(resourceLimit.message || ""))
+    )
+  ) {
+    return `Showing the first ${count} messages for this scan.`;
+  }
+
+  return resourceLimit.message || null;
+}
+
 function CompactScanSummary({
   automaticUnsubscribeCount,
   detailsOpen,
@@ -1740,15 +1760,13 @@ function CompactScanSummary({
   scanAgainLabel,
   scanState,
   senderGroupCount,
-  simulated,
 }) {
   const developmentLimit = resourceLimit?.code === "DEVELOPMENT_MESSAGE_LIMIT";
   const complete = scanState === SCAN_STATES.COMPLETE;
-  const title = developmentLimit
-    ? "Development scan limit reached"
-    : complete
-      ? "Scan complete"
-      : "Scan limit reached";
+  const scanLimitMessage = getProductScanLimitMessage(resourceLimit);
+  const title = complete && !resourceLimit
+    ? "Scan complete"
+    : "Scan limit reached.";
   const metricParts = [
     Number.isFinite(messageCount) ? formatQuantity(messageCount, "message") : null,
     Number.isFinite(senderGroupCount) ? formatQuantity(senderGroupCount, "sender group") : null,
@@ -1763,7 +1781,7 @@ function CompactScanSummary({
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div className="min-w-0">
           <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-slate-500">
-            {developmentLimit ? "Development limit" : complete ? "Ready" : "Scan limit"}
+            {complete && !resourceLimit ? "Ready" : "Scan limit"}
           </p>
           <h1 className="mt-2 flex items-center gap-2 text-xl font-semibold tracking-[-0.03em] text-white">
             {complete && !resourceLimit ? (
@@ -1784,17 +1802,14 @@ function CompactScanSummary({
             )}
             <span>{title}</span>
           </h1>
-          {resourceLimit?.message ? (
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">{resourceLimit.message}</p>
+          {scanLimitMessage ? (
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">{scanLimitMessage}</p>
           ) : null}
           {metricParts.length > 0 ? (
             <p className="mt-2 text-sm text-slate-200">{metricParts.join(" · ")}</p>
           ) : null}
           {pathParts.length > 0 ? (
             <p className="mt-1 text-sm text-slate-400">{pathParts.join(" · ")}</p>
-          ) : null}
-          {simulated ? (
-            <p className="mt-2 text-xs text-cyan-100/80">SIMULATION MODE — Gmail won&apos;t be changed.</p>
           ) : null}
         </div>
         <div className="flex flex-wrap gap-2 md:justify-end">
@@ -2025,7 +2040,9 @@ function SenderGroupCard({ armedActionType = null, group, mode = "active", onOpe
   const actionable = isGroupActionable(group);
   const done = mode === "done";
   const statusLabel = done ? "Handled" : getActionabilityLabel(group, false);
-  const statusTooltip = done ? "Completed in this simulated workflow session only." : getActionabilityTooltip(statusLabel, group.unsubscribe);
+  const statusTooltip = done
+    ? "Completed for this workflow session."
+    : getActionabilityTooltip(statusLabel, group.unsubscribe);
   const unsubscribeExecution = group?.workflow?.unsubscribeExecution || null;
   const cleanupExecution = group?.workflow?.cleanupExecution || null;
   const showUnsubscribeSeverSurface = !done && shouldShowUnsubscribeSeverSurface({
@@ -2238,7 +2255,7 @@ async function readJson(url, options) {
   return payload;
 }
 
-export function ProductionScanScreen({ authConfigured, autoAdvance = true, email, gmailAuthState, initialScan, workflowExecutionMode = "LIVE" }) {
+export function ProductionScanScreen({ authConfigured, autoAdvance = true, email, gmailAuthState, initialScan }) {
   const router = useRouter();
   const reducedMotion = useReducedMotion();
   const [scan, setScan] = useState(initialScan);
@@ -2316,7 +2333,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   const selectionSnapshot = buildSelectionSnapshot(selectedGroups);
   const selectionActionSummary = getSelectionActionSummary(selectionSnapshot);
   const activeSelectionDecision = selectionDecision === "unsubscribe" && !selectionActionSummary?.unsubscribe.enabled
-    ? null
+    ? (selectionActionSummary?.cleanup.enabled ? "cleanup" : null)
     : selectionDecision === "cleanup" && !selectionActionSummary?.cleanup.enabled
       ? null
       : selectionDecision;
@@ -2379,7 +2396,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
       : scan?.state === SCAN_STATES.PAUSED
         ? "Nothing new is being fetched. The current discovery set will stay still until you resume."
         : scan?.state === SCAN_STATES.RESOURCE_LIMIT_REACHED
-          ? "This local run stopped at the development scan cap. The results below are the preserved partial discovery set."
+          ? "The scan stopped at the current message limit. The results below are what Pidgeot has already found."
           : "Live discoveries stay visible here while Pidgeot keeps scanning. Sensitive financial mail stays out of cleanup.";
   const primaryActionDisabled = !effectivePresentation.actionType || pausing || (
     requestState !== "idle" && !(requestState === "auto-resume" && effectivePresentation.actionType === "pause")
@@ -2804,7 +2821,6 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
             })}
             scanState={scan?.state}
             senderGroupCount={senderGroups.length}
-            simulated={workflowExecutionMode === "SIMULATED"}
           />
           <AnimatePresence initial={false}>
             {errorMessage ? (
@@ -2913,7 +2929,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
             {scan?.state === SCAN_STATES.RESOURCE_LIMIT_REACHED && scan.resourceLimit ? (
               <div className="rounded-[22px] border border-[#f4c95d]/24 bg-[#f4c95d]/10 px-4 py-3 text-sm text-[#fbe9b2]">
                 {scan.resourceLimit.code === "DEVELOPMENT_MESSAGE_LIMIT"
-                  ? `${scan.resourceLimit.message} Everything already discovered stays available below.`
+                  ? `${getProductScanLimitMessage(scan.resourceLimit)} Everything already discovered stays available below.`
                   : `Scan stopped after ${scan.resourceLimit.currentMessageCount} retained messages out of the current limit of ${scan.resourceLimit.maxRetainedMessages}. Everything already discovered stays available below.`}
               </div>
             ) : null}
@@ -2921,12 +2937,6 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
             {scan?.state === SCAN_STATES.PARTIAL_RESULTS_AVAILABLE && !pausing ? (
               <div className="rounded-[22px] border border-cyan-300/24 bg-cyan-300/10 px-4 py-3 text-sm text-cyan-100">
                 Pidgeot is still looking. But it has already found sender groups you can start reviewing now.
-              </div>
-            ) : null}
-
-            {workflowExecutionMode === "SIMULATED" ? (
-              <div className="rounded-[22px] border border-cyan-300/24 bg-cyan-300/8 px-4 py-3 text-sm text-cyan-100">
-                SIMULATION MODE — Gmail won&apos;t be changed.
               </div>
             ) : null}
           </div>
@@ -3008,7 +3018,6 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
               onOpenManualDetails={() => openManualWizard(selectedManualGroups)}
               reducedMotion={reducedMotion}
               selectedCount={selectedCount}
-              workflowExecutionMode={workflowExecutionMode}
             />
           ) : null}
         </AnimatePresence>
@@ -3096,7 +3105,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
         ) : visibleResultTab === "done" && doneSenderGroups.length === 0 ? (
           <div className="mt-5 rounded-[24px] border border-white/10 bg-[rgba(8,14,25,0.76)] px-5 py-12 text-center">
             <p className="text-lg font-semibold text-white">No senders are done yet.</p>
-            <p className="mt-2 text-sm text-slate-400">Completed simulated actions will collect here without changing Gmail.</p>
+            <p className="mt-2 text-sm text-slate-400">Completed actions will collect here.</p>
           </div>
         ) : (
           <LayoutGroup>

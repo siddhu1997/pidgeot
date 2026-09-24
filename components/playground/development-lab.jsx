@@ -49,6 +49,36 @@ function getSendProgressPercent(sendProgress) {
   return Math.min(100, Math.round((sendProgress.processedCount / sendProgress.requestedCount) * 100));
 }
 
+function formatUnsubscribeRequestType(requestType) {
+  if (requestType === DEV_LAB_UNSUBSCRIBE_PROFILES.RFC8058_ONE_CLICK || requestType === "RFC8058") {
+    return "RFC 8058 one-click";
+  }
+
+  if (requestType === DEV_LAB_UNSUBSCRIBE_PROFILES.HTTPS_MANUAL) {
+    return "HTTPS request received";
+  }
+
+  return "Request received";
+}
+
+function formatUnsubscribeReceivedAt(at) {
+  const elapsedMs = Date.now() - Number(at || 0);
+
+  if (!Number.isFinite(elapsedMs) || elapsedMs < 15_000) {
+    return "Received just now";
+  }
+
+  if (elapsedMs < 60_000) {
+    return `Received ${Math.round(elapsedMs / 1000)}s ago`;
+  }
+
+  if (elapsedMs < 60 * 60 * 1000) {
+    return `Received ${Math.round(elapsedMs / 60_000)}m ago`;
+  }
+
+  return `Received ${new Date(at).toLocaleTimeString()}`;
+}
+
 function Field({ children, hint, label }) {
   return (
     <label className="grid gap-1.5">
@@ -70,6 +100,7 @@ export function DevelopmentLab({ initialStatus }) {
   const [categoryProfile, setCategoryProfile] = useState(DEV_LAB_CATEGORY_PROFILES.PROMOTIONAL);
   const [seed, setSeed] = useState(DEV_LAB_LIMITS.DEFAULT_SEED);
   const [requestState, setRequestState] = useState("idle");
+  const [modeRequestState, setModeRequestState] = useState("idle");
   const [errorMessage, setErrorMessage] = useState(null);
   const [generation, setGeneration] = useState(null);
   const [sendProgress, setSendProgress] = useState(null);
@@ -98,6 +129,35 @@ export function DevelopmentLab({ initialStatus }) {
 
     setStatus(payload.lab);
   }
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function pollReceipts() {
+      try {
+        const response = await fetch("/api/dev-lab/status");
+        const payload = await response.json();
+
+        if (!response.ok || cancelled) {
+          return;
+        }
+
+        setStatus(payload.lab);
+        if (payload.lab?.sendProgress) {
+          setSendProgress(payload.lab.sendProgress);
+        }
+      } catch {
+        return;
+      }
+    }
+
+    pollReceipts();
+    const timer = window.setInterval(pollReceipts, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   useEffect(() => {
     if (requestState !== "generating") {
@@ -131,6 +191,32 @@ export function DevelopmentLab({ initialStatus }) {
       window.clearInterval(timer);
     };
   }, [requestState]);
+
+  async function handleExecutionMode(mode) {
+    setModeRequestState("saving");
+    setErrorMessage(null);
+
+    try {
+      const response = await fetch("/api/dev-lab/execution-mode", {
+        body: JSON.stringify({ mode }),
+        headers: {
+          "content-type": "application/json",
+        },
+        method: "POST",
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload?.error?.message || "The execution mode could not be updated.");
+      }
+
+      setStatus(payload.lab);
+    } catch (error) {
+      setErrorMessage(error.message || "The execution mode could not be updated.");
+    } finally {
+      setModeRequestState("idle");
+    }
+  }
 
   async function handleGenerate(event) {
     event.preventDefault();
@@ -196,7 +282,7 @@ export function DevelopmentLab({ initialStatus }) {
           <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-white">Controlled Gmail test data.</h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-300">
             This surface is development-only. It generates synthetic mail, delivers it through Brevo or Mailgun, and
-            leaves production Gmail OAuth, grouping, and execution unchanged.
+            can switch the server execution mode. It never runs the production workflow from here.
           </p>
           <p className={classNames(
             "mt-4 rounded-2xl border px-4 py-3 text-sm",
@@ -232,15 +318,80 @@ export function DevelopmentLab({ initialStatus }) {
 
           <article className="rounded-[24px] border border-white/10 bg-[rgba(7,11,19,0.84)] p-5">
             <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">B. Execution</p>
-            <h2 className="mt-2 text-lg font-semibold text-white">Future execution modes</h2>
+            <h2 className="mt-2 text-lg font-semibold text-white">Workflow execution mode</h2>
             <p className="mt-1 text-sm text-slate-400">
-              This phase does not activate real unsubscribe or delete execution. Both remain simulated.
+              This sets the server-authoritative mode used by the production scan. It does not execute unsubscribe or Trash actions.
             </p>
             <div className="mt-4 grid gap-3 text-sm text-slate-200">
               <p>Unsubscribe mode: <span className="font-semibold text-white">{status?.unsubscribeMode || "simulation"}</span></p>
               <p>Delete unread mode: <span className="font-semibold text-white">{status?.deleteUnreadMode || "simulation"}</span></p>
             </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                className={classNames(
+                  "rounded-full border px-4 py-2 text-sm font-semibold transition-colors duration-200",
+                  (status?.unsubscribeMode || "simulation") === "simulation"
+                    ? "border-cyan-300/36 bg-cyan-300/16 text-cyan-100"
+                    : "border-white/12 bg-white/4 text-slate-200 hover:border-white/24",
+                )}
+                disabled={modeRequestState !== "idle"}
+                onClick={() => handleExecutionMode("simulation")}
+                type="button"
+              >
+                Simulation
+              </button>
+              <button
+                className={classNames(
+                  "rounded-full border px-4 py-2 text-sm font-semibold transition-colors duration-200",
+                  status?.unsubscribeMode === "real"
+                    ? "border-amber-300/36 bg-amber-300/14 text-[#fbe9b2]"
+                    : "border-white/12 bg-white/4 text-slate-200 hover:border-white/24",
+                )}
+                disabled={modeRequestState !== "idle"}
+                onClick={() => handleExecutionMode("real")}
+                type="button"
+              >
+                Real
+              </button>
+            </div>
+            {status?.unsubscribeMode === "real" ? (
+              <p className="mt-3 text-xs leading-5 text-[#fbe9b2]">
+                REAL MODE is active. The production scan will submit unsubscribe requests and move unread mail to Trash.
+              </p>
+            ) : (
+              <p className="mt-3 text-xs leading-5 text-cyan-100/80">
+                SIMULATION MODE is active. The production scan will not change Gmail or contact sender endpoints.
+              </p>
+            )}
           </article>
+        </section>
+
+        <section className="rounded-[24px] border border-white/10 bg-[rgba(7,11,19,0.84)] p-5">
+          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">Unsubscribe requests received</p>
+          <h2 className="mt-2 text-lg font-semibold text-white">
+            {(status?.unsubscribeHits || 0) === 1
+              ? "1 request received"
+              : `${status?.unsubscribeHits || 0} requests received`}
+          </h2>
+          <p className="mt-1 text-sm text-slate-400">
+            This records that the development endpoint received a request. It does not mean a sender finished an unsubscribe.
+          </p>
+          {(status?.recentUnsubscribeHits || []).length > 0 ? (
+            <ol className="mt-4 grid gap-2">
+              {(status.recentUnsubscribeHits || []).map((hit, index) => (
+                <li
+                  key={`${hit.at}-${hit.senderName || "unknown"}-${index}`}
+                  className="rounded-2xl border border-white/10 bg-white/4 px-4 py-3"
+                >
+                  <p className="font-semibold text-white">{hit.senderName || "Unknown sender"}</p>
+                  <p className="mt-1 text-sm text-slate-300">{formatUnsubscribeReceivedAt(hit.at)}</p>
+                  <p className="mt-1 text-xs text-slate-500">{formatUnsubscribeRequestType(hit.requestType)}</p>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="mt-4 text-sm text-slate-500">No requests received yet.</p>
+          )}
         </section>
 
         <form className="grid gap-4" onSubmit={handleGenerate}>

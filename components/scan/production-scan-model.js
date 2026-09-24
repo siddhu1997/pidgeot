@@ -178,9 +178,11 @@ export function derivePresentation(scan, gmailAuthState) {
           accent: "yellow",
           actionLabel: "Scan again",
           actionType: "start",
-          body: scan.resourceLimit?.message || "Showing the first 50 messages for this local test run.",
-          eyebrow: "Development limit",
-          title: "Development scan limit reached.",
+          body: Number.isFinite(scan.resourceLimit?.maxRetainedMessages)
+            ? `Showing the first ${scan.resourceLimit.maxRetainedMessages} messages for this scan.`
+            : "Showing the messages found for this scan.",
+          eyebrow: "Scan limit",
+          title: "Scan limit reached.",
           tone: "warning",
           visualMode: "stopped",
         };
