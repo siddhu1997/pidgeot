@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from "motion/react";
 
 import { SENDER_CATEGORIES } from "@/lib/classification/constants";
@@ -1186,6 +1187,72 @@ function BulkSelectionControls({ allVisibleSelected, disabled, onClearAll, onSel
   );
 }
 
+const FILTER_TOOLTIP_WIDTH = 224;
+
+function getFilterTooltipPosition(trigger) {
+  const rect = trigger.getBoundingClientRect();
+  const left = Math.min(Math.max(8, rect.left), window.innerWidth - FILTER_TOOLTIP_WIDTH - 8);
+  const estimatedHeight = 88;
+  const top = window.innerHeight - rect.bottom < estimatedHeight + 12 && rect.top > estimatedHeight + 12
+    ? rect.top - estimatedHeight - 8
+    : rect.bottom + 8;
+
+  return { left, top };
+}
+
+function FilterInfoTip({ description }) {
+  const triggerRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState({ left: 0, top: 0 });
+
+  function updatePosition() {
+    if (!triggerRef.current) {
+      return;
+    }
+
+    setPosition(getFilterTooltipPosition(triggerRef.current));
+  }
+
+  function showTip() {
+    updatePosition();
+    setOpen(true);
+  }
+
+  function hideTip() {
+    setOpen(false);
+  }
+
+  const tooltip = open && typeof document !== "undefined"
+    ? createPortal(
+      <span
+        className="pointer-events-none fixed z-[90] w-56 rounded-2xl border border-white/12 bg-[rgba(7,11,19,0.96)] px-3 py-2 text-xs leading-5 text-slate-200 shadow-[0_18px_40px_rgba(0,0,0,0.32)]"
+        role="tooltip"
+        style={{ left: position.left, top: position.top }}
+      >
+        {description}
+      </span>,
+      document.body,
+    )
+    : null;
+
+  return (
+    <>
+      <span
+        ref={triggerRef}
+        className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-white/16 bg-white/8 text-[10px] font-semibold text-slate-300"
+        onBlur={hideTip}
+        onFocus={showTip}
+        onMouseEnter={showTip}
+        onMouseLeave={hideTip}
+        tabIndex={0}
+      >
+        i
+      </span>
+      {tooltip}
+    </>
+  );
+}
+
 function FilterOptionRow({ checked, explanation, label, onToggle }) {
   return (
     <div className="flex items-center gap-2 rounded-2xl border border-white/8 bg-white/4 px-3 py-2.5">
@@ -1198,14 +1265,23 @@ function FilterOptionRow({ checked, explanation, label, onToggle }) {
           type="checkbox"
         />
       </label>
-      <TooltipTag
-        className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-white/16 bg-white/8 text-[10px] font-semibold text-slate-300"
-        description={explanation}
-      >
-        i
-      </TooltipTag>
+      <FilterInfoTip description={explanation} />
     </div>
   );
+}
+
+const FILTER_MENU_WIDTH = 280;
+const FILTER_MENU_HEIGHT = 440;
+
+function getFilterMenuPosition(trigger) {
+  const rect = trigger.getBoundingClientRect();
+  const left = Math.min(Math.max(8, rect.left), window.innerWidth - FILTER_MENU_WIDTH - 8);
+  const spaceBelow = window.innerHeight - rect.bottom;
+  const top = spaceBelow < FILTER_MENU_HEIGHT + 12 && rect.top > FILTER_MENU_HEIGHT + 12
+    ? rect.top - FILTER_MENU_HEIGHT - 10
+    : rect.bottom + 10;
+
+  return { left, top };
 }
 
 function FilterMenu({
@@ -1218,13 +1294,23 @@ function FilterMenu({
   surfaceFilters,
   unsubscribePathFilters,
 }) {
-  const rootRef = useRef(null);
+  const triggerRef = useRef(null);
+  const menuRef = useRef(null);
   const [open, setOpen] = useState(false);
   const [pane, setPane] = useState("root");
+  const [menuPosition, setMenuPosition] = useState({ left: 0, top: 0 });
 
   function closeMenu() {
     setOpen(false);
     setPane("root");
+  }
+
+  function updateMenuPosition() {
+    if (!triggerRef.current) {
+      return;
+    }
+
+    setMenuPosition(getFilterMenuPosition(triggerRef.current));
   }
 
   useEffect(() => {
@@ -1233,9 +1319,11 @@ function FilterMenu({
     }
 
     function handlePointerDown(event) {
-      if (!rootRef.current?.contains(event.target)) {
-        closeMenu();
+      if (triggerRef.current?.contains(event.target) || menuRef.current?.contains(event.target)) {
+        return;
       }
+
+      closeMenu();
     }
 
     function handleKeyDown(event) {
@@ -1247,10 +1335,14 @@ function FilterMenu({
 
     document.addEventListener("pointerdown", handlePointerDown);
     window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("resize", updateMenuPosition);
+    window.addEventListener("scroll", updateMenuPosition, true);
 
     return () => {
       document.removeEventListener("pointerdown", handlePointerDown);
       window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("resize", updateMenuPosition);
+      window.removeEventListener("scroll", updateMenuPosition, true);
     };
   }, [open]);
 
@@ -1261,13 +1353,103 @@ function FilterMenu({
     }
 
     setPane("root");
+    updateMenuPosition();
     setOpen(true);
   }
 
+  const menu = open && typeof document !== "undefined"
+    ? createPortal(
+      <div
+        ref={menuRef}
+        aria-label="Filter"
+        className="fixed z-[80] overflow-hidden rounded-[24px] border border-white/12 bg-[rgba(7,11,19,0.98)] p-3 shadow-[0_18px_40px_rgba(0,0,0,0.32)]"
+        role="dialog"
+        style={{
+          height: FILTER_MENU_HEIGHT,
+          left: menuPosition.left,
+          top: menuPosition.top,
+          width: FILTER_MENU_WIDTH,
+        }}
+      >
+        {pane === "root" ? (
+          <div className="grid gap-2">
+            {[
+              { id: "path", label: "Unsubscribe path" },
+              { id: "category", label: "Category" },
+              { id: "surface", label: "Surface" },
+            ].map((dimension) => (
+              <button
+                key={dimension.id}
+                className="flex w-full items-center justify-between rounded-2xl border border-white/8 bg-white/4 px-3 py-2.5 text-left text-sm text-slate-200 transition-colors duration-150 hover:bg-white/8"
+                onClick={() => setPane(dimension.id)}
+                type="button"
+              >
+                <span>{dimension.label}</span>
+                <span className="text-slate-500">›</span>
+              </button>
+            ))}
+            <button
+              className="mt-1 w-full rounded-2xl border border-white/12 px-3 py-2 text-sm font-semibold text-white transition-colors duration-200 hover:border-white/24 hover:bg-white/8"
+              onClick={() => {
+                onClearFilters();
+                setPane("root");
+              }}
+              type="button"
+            >
+              Clear filters
+            </button>
+          </div>
+        ) : (
+          <div className="grid gap-2">
+            <button
+              className="flex items-center gap-2 rounded-2xl px-1 py-1 text-left text-sm font-semibold text-white transition-colors duration-150 hover:bg-white/8"
+              onClick={() => setPane("root")}
+              type="button"
+            >
+              <span aria-hidden="true">←</span>
+              <span>
+                {pane === "category" ? "Category" : pane === "path" ? "Unsubscribe path" : "Surface"}
+              </span>
+            </button>
+            {pane === "category" ? CATEGORY_FILTER_OPTIONS.map((category) => (
+              <FilterOptionRow
+                key={category}
+                checked={categoryFilters.includes(category)}
+                explanation={FILTER_CATEGORY_EXPLANATIONS[category]}
+                label={formatLabel(category)}
+                onToggle={() => onToggleCategory(category)}
+              />
+            )) : null}
+            {pane === "path" ? UNSUBSCRIBE_PATH_FILTER_OPTIONS.map((option) => (
+              <FilterOptionRow
+                key={option.id}
+                checked={unsubscribePathFilters.includes(option.id)}
+                explanation={option.explanation}
+                label={option.label}
+                onToggle={() => onToggleUnsubscribePath(option.id)}
+              />
+            )) : null}
+            {pane === "surface" ? SURFACE_FILTER_OPTIONS.map((option) => (
+              <FilterOptionRow
+                key={option.id}
+                checked={surfaceFilters.includes(option.id)}
+                explanation={option.explanation}
+                label={option.label}
+                onToggle={() => onToggleSurface(option.id)}
+              />
+            )) : null}
+          </div>
+        )}
+      </div>,
+      document.body,
+    )
+    : null;
+
   return (
-    <div className="relative grid gap-2" ref={rootRef}>
+    <div className="grid gap-2">
       <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">Filter</span>
       <button
+        ref={triggerRef}
         aria-expanded={open}
         aria-haspopup="dialog"
         className={classNames(
@@ -1281,79 +1463,7 @@ function FilterMenu({
         <span className="truncate">{selectedFilterSummary}</span>
         <span className={classNames("text-slate-500 transition-transform duration-150", open ? "rotate-180" : null)}>▾</span>
       </button>
-      {open ? (
-        <div className="absolute left-0 top-[calc(100%+0.75rem)] z-20 w-[280px] rounded-[24px] border border-white/12 bg-[rgba(7,11,19,0.98)] p-3 shadow-[0_18px_40px_rgba(0,0,0,0.32)]">
-          {pane === "root" ? (
-            <div className="grid gap-2">
-              {[
-                { id: "path", label: "Unsubscribe path" },
-                { id: "category", label: "Category" },
-                { id: "surface", label: "Surface" },
-              ].map((dimension) => (
-                <button
-                  key={dimension.id}
-                  className="flex w-full items-center justify-between rounded-2xl border border-white/8 bg-white/4 px-3 py-2.5 text-left text-sm text-slate-200 transition-colors duration-150 hover:bg-white/8"
-                  onClick={() => setPane(dimension.id)}
-                  type="button"
-                >
-                  <span>{dimension.label}</span>
-                  <span className="text-slate-500">›</span>
-                </button>
-              ))}
-              <button
-                className="mt-1 w-full rounded-2xl border border-white/12 px-3 py-2 text-sm font-semibold text-white transition-colors duration-200 hover:border-white/24 hover:bg-white/8"
-                onClick={() => {
-                  onClearFilters();
-                  setPane("root");
-                }}
-                type="button"
-              >
-                Clear filters
-              </button>
-            </div>
-          ) : (
-            <div className="grid gap-2">
-              <button
-                className="flex items-center gap-2 rounded-2xl px-1 py-1 text-left text-sm font-semibold text-white transition-colors duration-150 hover:bg-white/8"
-                onClick={() => setPane("root")}
-                type="button"
-              >
-                <span aria-hidden="true">←</span>
-                <span>
-                  {pane === "category" ? "Category" : pane === "path" ? "Unsubscribe path" : "Surface"}
-                </span>
-              </button>
-              {pane === "category" ? CATEGORY_FILTER_OPTIONS.map((category) => (
-                <FilterOptionRow
-                  key={category}
-                  checked={categoryFilters.includes(category)}
-                  explanation={FILTER_CATEGORY_EXPLANATIONS[category]}
-                  label={formatLabel(category)}
-                  onToggle={() => onToggleCategory(category)}
-                />
-              )) : null}
-              {pane === "path" ? UNSUBSCRIBE_PATH_FILTER_OPTIONS.map((option) => (
-                <FilterOptionRow
-                  key={option.id}
-                  checked={unsubscribePathFilters.includes(option.id)}
-                  explanation={option.explanation}
-                  label={option.label}
-                  onToggle={() => onToggleUnsubscribePath(option.id)}
-                />
-              )) : null}
-              {pane === "surface" ? SURFACE_FILTER_OPTIONS.map((option) => (
-                <FilterOptionRow
-                  key={option.id}
-                  checked={surfaceFilters.includes(option.id)}
-                  explanation={option.explanation}
-                  label={option.label}
-                  onToggle={() => onToggleSurface(option.id)}
-                />
-              )) : null}
-            </div>
-          )}
-        </div>
-      ) : null}
+      {menu}
     </div>
   );
 }
@@ -1380,25 +1490,55 @@ function ManualUnsubscribeInfoCard({ disabled, onOpenManualDetails }) {
   );
 }
 
-function SelectionActionButton({ active, description, disabled, label, onClick }) {
+function getRecommendedSelectionAction(actionSummary) {
+  if (actionSummary?.unsubscribe?.enabled) {
+    return "unsubscribe";
+  }
+
+  if (actionSummary?.cleanup?.enabled) {
+    return "cleanup";
+  }
+
+  return null;
+}
+
+function SelectionActionButton({ active, description, disabled, emphasized = false, label, onClick, reducedMotion }) {
+  const showEmphasis = emphasized && !disabled;
+
   return (
     <motion.button
       aria-pressed={active}
       className={classNames(
-        "flex min-h-[72px] min-w-[220px] flex-1 flex-col items-start justify-center rounded-[22px] border px-4 py-3 text-left transition-[background-color,border-color,transform] duration-200",
+        "relative isolate flex min-h-[72px] min-w-[220px] flex-1 flex-col items-start justify-center overflow-hidden rounded-[22px] border px-4 py-3 text-left transition-[background-color,border-color,box-shadow,transform] duration-200",
         disabled
           ? "cursor-not-allowed border-white/8 bg-black/20 text-slate-500"
           : active
             ? "border-cyan-300/28 bg-cyan-300/12 text-white shadow-[0_10px_22px_rgba(8,14,25,0.2)]"
             : "border-white/12 bg-[rgba(7,11,19,0.88)] text-white hover:border-white/24 hover:bg-white/8",
+        showEmphasis
+          ? "border-cyan-200/40 shadow-[0_0_0_1px_rgba(186,230,253,0.16),inset_0_1px_0_rgba(255,255,255,0.14),0_12px_28px_rgba(56,189,248,0.1)]"
+          : null,
       )}
       disabled={disabled}
       onClick={onClick}
       type="button"
       whileTap={disabled ? undefined : { scale: 0.985 }}
     >
-      <span className="text-sm font-semibold">{label}</span>
-      <span className={classNames("mt-1 text-xs leading-5", disabled ? "text-slate-500" : active ? "text-cyan-100" : "text-slate-400")}>
+      {showEmphasis ? (
+        <span aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden rounded-[21px]">
+          <span className="absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-white/40 to-transparent" />
+          <span className="absolute inset-0 bg-[linear-gradient(115deg,transparent_18%,rgba(255,255,255,0.06)_46%,transparent_62%)]" />
+          {reducedMotion ? null : (
+            <motion.span
+              className="absolute top-[-40%] h-[180%] w-14 -skew-x-12 bg-gradient-to-r from-transparent via-cyan-100/18 to-transparent"
+              animate={{ left: ["-35%", "120%"] }}
+              transition={{ duration: 4.2, ease: "easeInOut", repeat: Infinity, repeatDelay: 1.6 }}
+            />
+          )}
+        </span>
+      ) : null}
+      <span className="relative text-sm font-semibold">{label}</span>
+      <span className={classNames("relative mt-1 text-xs leading-5", disabled ? "text-slate-500" : active ? "text-cyan-100" : "text-slate-400")}>
         {description}
       </span>
     </motion.button>
@@ -1435,6 +1575,7 @@ function SelectionActionBar({
       : "Delete unread";
   const actionLocked = executionRequestState !== "idle" || hasRunningExecution;
   const executeDisabled = !activeDecision || actionLocked;
+  const recommendedAction = getRecommendedSelectionAction(actionSummary);
 
   return (
     <motion.section
@@ -1473,16 +1614,20 @@ function SelectionActionBar({
             active={activeDecision === "unsubscribe"}
             description={unsubscribeButtonDescription}
             disabled={!actionSummary.unsubscribe.enabled || actionLocked}
+            emphasized={recommendedAction === "unsubscribe"}
             label={actionSummary.unsubscribe.label}
             onClick={() => onDecisionChange(activeDecision === "unsubscribe" ? null : "unsubscribe")}
+            reducedMotion={reducedMotion}
           />
         )}
         <SelectionActionButton
           active={activeDecision === "cleanup"}
           description={cleanupButtonDescription}
           disabled={!actionSummary.cleanup.enabled || actionLocked}
+          emphasized={recommendedAction === "cleanup"}
           label={actionSummary.cleanup.label}
           onClick={() => onDecisionChange(activeDecision === "cleanup" ? null : "cleanup")}
+          reducedMotion={reducedMotion}
         />
       </div>
 
@@ -1570,6 +1715,110 @@ function DiscoveryFact({ children }) {
     <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-200">
       {children}
     </div>
+  );
+}
+
+function isPostScanCompactEligible(scan) {
+  return Boolean(
+    scan
+    && (
+      scan.state === SCAN_STATES.COMPLETE
+      || scan.state === SCAN_STATES.RESOURCE_LIMIT_REACHED
+    ),
+  );
+}
+
+function CompactScanSummary({
+  automaticUnsubscribeCount,
+  detailsOpen,
+  disabled,
+  manualUnsubscribeCount,
+  messageCount,
+  onScanAgain,
+  onToggleDetails,
+  resourceLimit,
+  scanAgainLabel,
+  scanState,
+  senderGroupCount,
+  simulated,
+}) {
+  const developmentLimit = resourceLimit?.code === "DEVELOPMENT_MESSAGE_LIMIT";
+  const complete = scanState === SCAN_STATES.COMPLETE;
+  const title = developmentLimit
+    ? "Development scan limit reached"
+    : complete
+      ? "Scan complete"
+      : "Scan limit reached";
+  const metricParts = [
+    Number.isFinite(messageCount) ? formatQuantity(messageCount, "message") : null,
+    Number.isFinite(senderGroupCount) ? formatQuantity(senderGroupCount, "sender group") : null,
+  ].filter(Boolean);
+  const pathParts = [
+    automaticUnsubscribeCount > 0 ? `${automaticUnsubscribeCount} automatic` : null,
+    manualUnsubscribeCount > 0 ? `${manualUnsubscribeCount} manual` : null,
+  ].filter(Boolean);
+
+  return (
+    <section className="rounded-[28px] border border-white/12 bg-[rgba(7,11,19,0.84)] px-5 py-4 shadow-[0_18px_48px_rgba(0,0,0,0.22)] md:px-6">
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div className="min-w-0">
+          <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-slate-500">
+            {developmentLimit ? "Development limit" : complete ? "Ready" : "Scan limit"}
+          </p>
+          <h1 className="mt-2 flex items-center gap-2 text-xl font-semibold tracking-[-0.03em] text-white">
+            {complete && !resourceLimit ? (
+              <span className="text-emerald-300" aria-hidden="true">✓</span>
+            ) : (
+              <span className="text-[#f4c95d]" aria-hidden="true">
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 20 20">
+                  <path
+                    d="M10 3.2 17.6 16.4H2.4L10 3.2Z"
+                    stroke="currentColor"
+                    strokeLinejoin="round"
+                    strokeWidth="1.5"
+                  />
+                  <path d="M10 8.2v4.1" stroke="currentColor" strokeLinecap="round" strokeWidth="1.5" />
+                  <circle cx="10" cy="14.3" fill="currentColor" r="0.75" />
+                </svg>
+              </span>
+            )}
+            <span>{title}</span>
+          </h1>
+          {resourceLimit?.message ? (
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">{resourceLimit.message}</p>
+          ) : null}
+          {metricParts.length > 0 ? (
+            <p className="mt-2 text-sm text-slate-200">{metricParts.join(" · ")}</p>
+          ) : null}
+          {pathParts.length > 0 ? (
+            <p className="mt-1 text-sm text-slate-400">{pathParts.join(" · ")}</p>
+          ) : null}
+          {simulated ? (
+            <p className="mt-2 text-xs text-cyan-100/80">SIMULATION MODE — Gmail won&apos;t be changed.</p>
+          ) : null}
+        </div>
+        <div className="flex flex-wrap gap-2 md:justify-end">
+          <button
+            className={classNames(
+              "rounded-2xl px-5 py-3 text-sm font-semibold shadow-[0_12px_26px_rgba(0,0,0,0.18)] transition-transform duration-200 hover:-translate-y-0.5 disabled:translate-y-0 disabled:opacity-80",
+              developmentLimit ? "bg-[#f4c95d] text-slate-950" : "bg-emerald-300 text-slate-950",
+            )}
+            disabled={disabled}
+            onClick={onScanAgain}
+            type="button"
+          >
+            {scanAgainLabel}
+          </button>
+          <button
+            className="rounded-2xl border border-white/12 bg-white/4 px-5 py-3 text-sm font-semibold text-white transition-colors duration-200 hover:border-white/24 hover:bg-white/8"
+            onClick={onToggleDetails}
+            type="button"
+          >
+            {detailsOpen ? "Hide scan details" : "View scan details"}
+          </button>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -2006,6 +2255,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   const [categoryFilters, setCategoryFilters] = useState([]);
   const [unsubscribePathFilters, setUnsubscribePathFilters] = useState([]);
   const [surfaceFilters, setSurfaceFilters] = useState([]);
+  const [scanDetailsExpanded, setScanDetailsExpanded] = useState(false);
   const autoAdvanceVersionRef = useRef(0);
 
   const senderGroups = scan?.senderGroups || [];
@@ -2134,6 +2384,16 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   const primaryActionDisabled = !effectivePresentation.actionType || pausing || (
     requestState !== "idle" && !(requestState === "auto-resume" && effectivePresentation.actionType === "pause")
   );
+  const scanRestarting = requestState === "start";
+  const postScanCompactEligible = isPostScanCompactEligible(scan) && !pausing && !activeScan && !scanRestarting;
+  const showCompactScanSummary = postScanCompactEligible && !scanDetailsExpanded;
+  const discoveredMessageCount = Number.isFinite(scan?.counters?.messagesNormalized)
+    ? scan.counters.messagesNormalized
+    : Number.isFinite(scan?.counters?.messagesDiscovered)
+      ? scan.counters.messagesDiscovered
+      : Number.isFinite(scan?.resourceLimit?.currentMessageCount)
+        ? scan.resourceLimit.currentMessageCount
+        : null;
 
   useEffect(() => {
     const reviewReady = Boolean(scan?.scanId)
@@ -2405,6 +2665,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
         setSelectionDecision(null);
         setSelectionWorkflow(null);
         setActiveResultTab("active");
+        setScanDetailsExpanded(false);
       }
       setErrorMessage(null);
     } catch (error) {
@@ -2525,6 +2786,41 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
         />
       ) : null}
 
+      {showCompactScanSummary ? (
+        <>
+          <CompactScanSummary
+            automaticUnsubscribeCount={automaticUnsubscribeCount}
+            detailsOpen={false}
+            disabled={primaryActionDisabled}
+            manualUnsubscribeCount={manualUnsubscribeCount}
+            messageCount={discoveredMessageCount}
+            onScanAgain={() => handleScanAction(effectivePresentation.actionType)}
+            onToggleDetails={() => setScanDetailsExpanded(true)}
+            resourceLimit={scan?.resourceLimit || null}
+            scanAgainLabel={getActionButtonLabel({
+              actionLabel: effectivePresentation.actionLabel || "Scan again",
+              pausing,
+              requestState,
+            })}
+            scanState={scan?.state}
+            senderGroupCount={senderGroups.length}
+            simulated={workflowExecutionMode === "SIMULATED"}
+          />
+          <AnimatePresence initial={false}>
+            {errorMessage ? (
+              <motion.div
+                key={errorMessage}
+                className="rounded-[22px] border border-rose-300/24 bg-rose-300/10 px-4 py-3 text-sm text-rose-100"
+                initial={reducedMotion ? false : { opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={reducedMotion ? undefined : { opacity: 0, y: -8 }}
+              >
+                {errorMessage}
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
+        </>
+      ) : (
       <section className="rounded-[32px] border border-white/12 bg-[rgba(7,11,19,0.84)] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.28)] md:p-6">
         <div className="grid gap-6 xl:grid-cols-[0.88fr_1.12fr] xl:items-start">
           <div className="space-y-5">
@@ -2589,6 +2885,15 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
                 Refresh status
               </button>
               <Link className="rounded-2xl border border-white/12 bg-white/4 px-5 py-3 text-sm font-semibold text-white transition-colors duration-200 hover:border-white/24 hover:bg-white/8" href="/privacy">Privacy posture</Link>
+              {postScanCompactEligible ? (
+                <button
+                  className="rounded-2xl border border-white/12 bg-white/4 px-5 py-3 text-sm font-semibold text-white transition-colors duration-200 hover:border-white/24 hover:bg-white/8"
+                  onClick={() => setScanDetailsExpanded(false)}
+                  type="button"
+                >
+                  Hide scan details
+                </button>
+              ) : null}
             </div>
 
             <AnimatePresence initial={false}>
@@ -2634,8 +2939,10 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
           />
         </div>
       </section>
+      )}
 
       <section className="rounded-[32px] border border-white/12 bg-[rgba(7,11,19,0.82)] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.25)] md:p-6">
+        {showCompactScanSummary ? null : (
         <div className="flex flex-col gap-4 border-b border-white/10 pb-4 md:flex-row md:items-end md:justify-between">
           <div>
             <p className="font-mono text-xs uppercase tracking-[0.28em] text-slate-400">
@@ -2653,8 +2960,9 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
             <CounterBadge label="Mailbox" value={email} />
           </div>
         </div>
+        )}
 
-        <div className="mt-5 border-b border-white/10">
+        <div className={classNames("border-b border-white/10", showCompactScanSummary ? null : "mt-5")}>
           <div className="flex gap-6">
             <button
               aria-selected={visibleResultTab === "active"}
