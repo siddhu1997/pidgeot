@@ -252,7 +252,7 @@ function hasRemainingUnsubscribeAction(group) {
 }
 
 function hasAutomaticUnsubscribeAction(group) {
-  return getGroupUnsubscribeAvailability(group).automaticCount > 0;
+  return getGroupUnsubscribeAvailability(group).executable;
 }
 
 function isGroupActionable(group) {
@@ -313,7 +313,7 @@ function buildExecutionSummary({ actionType, groups }) {
     }
 
     if (actionType === "unsubscribe") {
-      return Boolean(group?.workflow?.unsubscribeOperationsAvailable || group?.workflow?.unsubscribeHandledLocally);
+      return hasExecutableUnsubscribeAction(group) || Boolean(group?.workflow?.unsubscribeHandledLocally);
     }
 
     return getGroupCleanupEligibleCount(group) > 0;
@@ -816,29 +816,51 @@ function getGroupUnsubscribeAvailability(group) {
   const actionableMechanisms = mechanisms.filter((mechanism) => (
     AUTOMATIC_UNSUBSCRIBE_STATUSES.has(mechanism?.status) || mechanism?.manualActionRequired || mechanism?.status === "MANUAL_ACTION_REQUIRED"
   ));
-  const automaticCount = actionableMechanisms.filter((mechanism) => (
+  const fallbackAutomaticCount = actionableMechanisms.filter((mechanism) => (
     AUTOMATIC_UNSUBSCRIBE_STATUSES.has(mechanism?.status) || mechanism?.automatic
   )).length;
-  const manualCount = actionableMechanisms.filter((mechanism) => (
+  const fallbackManualCount = actionableMechanisms.filter((mechanism) => (
     !AUTOMATIC_UNSUBSCRIBE_STATUSES.has(mechanism?.status) && (mechanism?.manualActionRequired || mechanism?.status === "MANUAL_ACTION_REQUIRED")
   )).length;
-  const available = Boolean(group?.workflow?.unsubscribeOperationsAvailable ?? actionableMechanisms.length > 0);
+  const manualOperations = Array.isArray(group?.workflow?.manualUnsubscribeOperations)
+    ? group.workflow.manualUnsubscribeOperations
+    : [];
+  const automaticCount = Number.isFinite(group?.workflow?.unsubscribeAutomaticOperationCount)
+    ? group.workflow.unsubscribeAutomaticOperationCount
+    : fallbackAutomaticCount;
+  const manualCount = manualOperations.length > 0 ? manualOperations.length : fallbackManualCount;
+  const available = automaticCount > 0 || manualCount > 0;
 
   return {
     available,
     automaticCount,
+    executable: automaticCount > 0,
     manualCount,
   };
+}
+
+function hasExecutableUnsubscribeAction(group) {
+  return getGroupUnsubscribeAvailability(group).executable;
+}
+
+function getManualUnsubscribeOperations(group) {
+  return Array.isArray(group?.workflow?.manualUnsubscribeOperations)
+    ? group.workflow.manualUnsubscribeOperations
+    : [];
+}
+
+function hasManualOnlyUnsubscribeAction(group) {
+  const unsubscribeAvailability = getGroupUnsubscribeAvailability(group);
+
+  return unsubscribeAvailability.automaticCount === 0 && unsubscribeAvailability.manualCount > 0;
 }
 
 function buildSelectionSnapshot(groups) {
   const selectedCount = groups.length;
   let cleanupEligibleGroupCount = 0;
   let cleanupEligibleUnreadCount = 0;
-  let unsubscribeAvailableCount = 0;
-  let automaticOnlyCount = 0;
-  let manualOnlyCount = 0;
-  let mixedPathCount = 0;
+  let unsubscribeAutomaticGroupCount = 0;
+  let unsubscribeManualGroupCount = 0;
 
   for (const group of groups) {
     const cleanupEligibleCount = getGroupCleanupEligibleCount(group);
@@ -849,27 +871,21 @@ function buildSelectionSnapshot(groups) {
       cleanupEligibleUnreadCount += cleanupEligibleCount;
     }
 
-    if (unsubscribeAvailability.available) {
-      unsubscribeAvailableCount += 1;
+    if (unsubscribeAvailability.automaticCount > 0) {
+      unsubscribeAutomaticGroupCount += 1;
+    }
 
-      if (unsubscribeAvailability.automaticCount > 0 && unsubscribeAvailability.manualCount > 0) {
-        mixedPathCount += 1;
-      } else if (unsubscribeAvailability.automaticCount > 0) {
-        automaticOnlyCount += 1;
-      } else if (unsubscribeAvailability.manualCount > 0) {
-        manualOnlyCount += 1;
-      }
+    if (unsubscribeAvailability.automaticCount === 0 && unsubscribeAvailability.manualCount > 0) {
+      unsubscribeManualGroupCount += 1;
     }
   }
 
   return {
-    automaticOnlyCount,
     cleanupEligibleGroupCount,
     cleanupEligibleUnreadCount,
-    manualOnlyCount,
-    mixedPathCount,
     selectedCount,
-    unsubscribeAvailableCount,
+    unsubscribeAutomaticGroupCount,
+    unsubscribeManualGroupCount,
   };
 }
 
@@ -914,24 +930,20 @@ function getSelectionActionSummary(snapshot) {
     return null;
   }
 
-  const unsubscribeEnabled = snapshot.unsubscribeAvailableCount > 0;
+  const unsubscribeEnabled = snapshot.unsubscribeAutomaticGroupCount > 0;
   const cleanupEnabled = snapshot.cleanupEligibleGroupCount > 0 && snapshot.cleanupEligibleUnreadCount > 0;
 
   let unsubscribeDetail = "Unavailable for this selection.";
 
-  if (unsubscribeEnabled) {
+  if (snapshot.unsubscribeAutomaticGroupCount > 0 || snapshot.unsubscribeManualGroupCount > 0) {
     const unsubscribeParts = [];
 
-    if (snapshot.automaticOnlyCount > 0) {
-      unsubscribeParts.push(`${formatQuantity(snapshot.automaticOnlyCount, "sender")} automatic`);
+    if (snapshot.unsubscribeAutomaticGroupCount > 0) {
+      unsubscribeParts.push(`${formatQuantity(snapshot.unsubscribeAutomaticGroupCount, "sender")} automatic`);
     }
 
-    if (snapshot.manualOnlyCount > 0) {
-      unsubscribeParts.push(`${formatQuantity(snapshot.manualOnlyCount, "sender")} manual`);
-    }
-
-    if (snapshot.mixedPathCount > 0) {
-      unsubscribeParts.push(`${formatQuantity(snapshot.mixedPathCount, "sender")} mixed`);
+    if (snapshot.unsubscribeManualGroupCount > 0) {
+      unsubscribeParts.push(`${formatQuantity(snapshot.unsubscribeManualGroupCount, "sender")} manual`);
     }
 
     unsubscribeDetail = unsubscribeParts.join(" · ");
@@ -949,8 +961,203 @@ function getSelectionActionSummary(snapshot) {
       description: unsubscribeDetail,
       enabled: unsubscribeEnabled,
       label: "Unsubscribe",
+      manualGroupCount: snapshot.unsubscribeManualGroupCount,
+      automaticGroupCount: snapshot.unsubscribeAutomaticGroupCount,
     },
   };
+}
+
+function formatManualUnsubscribeMethod(operation) {
+  if (operation?.type === "MAILTO") {
+    return "Preaddressed unsubscribe email";
+  }
+
+  if (operation?.type === "HTTPS_LINK") {
+    return "Manual unsubscribe page";
+  }
+
+  if (operation?.type === "HTTP_LINK") {
+    return "Manual unsubscribe link";
+  }
+
+  return formatLabel(operation?.type || "MANUAL_ACTION_REQUIRED");
+}
+
+function getManualUnsubscribeReason(operation) {
+  if (operation?.type === "MAILTO") {
+    return "Pidgeot found a mailto unsubscribe address, which still needs a manual email step.";
+  }
+
+  if (operation?.type === "HTTPS_LINK") {
+    return "Pidgeot found an unsubscribe page, but it is not a one-click request that Pidgeot can submit automatically.";
+  }
+
+  if (operation?.type === "HTTP_LINK") {
+    return "Pidgeot found a web unsubscribe link that is not an automatic one-click HTTPS request, so it stays manual.";
+  }
+
+  return "Pidgeot found an unsubscribe option, but it still requires a manual action.";
+}
+
+function ManualCountButton({ count, disabled, onClick }) {
+  return (
+    <button
+      className={classNames(
+        "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium transition-colors duration-200",
+        disabled
+          ? "cursor-not-allowed border-white/8 bg-black/18 text-slate-500"
+          : "border-cyan-300/20 bg-cyan-300/10 text-cyan-100 hover:border-cyan-300/36 hover:bg-cyan-300/14",
+      )}
+      disabled={disabled}
+      onClick={onClick}
+      type="button"
+    >
+      {`${formatQuantity(count, "sender")} manual`}
+    </button>
+  );
+}
+
+function SelectionSummaryRow({ action, manualDisabled = false, onOpenManualDetails }) {
+  if (!action) {
+    return null;
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-sm text-slate-300">
+      <span className="font-semibold text-white">{action.label}</span>
+      {action.label === "Unsubscribe" ? (
+        <>
+          {action.automaticGroupCount > 0 ? <span>{`${formatQuantity(action.automaticGroupCount, "sender")} automatic`}</span> : null}
+          {action.manualGroupCount > 0 ? (
+            <ManualCountButton
+              count={action.manualGroupCount}
+              disabled={manualDisabled}
+              onClick={onOpenManualDetails}
+            />
+          ) : null}
+          {!action.enabled && action.manualGroupCount === 0 ? <span>Unavailable for this selection.</span> : null}
+        </>
+      ) : (
+        <span>{action.enabled ? action.description : "No unread cleanup available."}</span>
+      )}
+    </div>
+  );
+}
+
+function ManualUnsubscribeDetailsModal({ groups, onClose, reducedMotion }) {
+  const closeButtonRef = useRef(null);
+
+  useEffect(() => {
+    closeButtonRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose]);
+
+  return (
+    <AnimatePresence>
+      <motion.div
+        key="manual-unsubscribe-backdrop"
+        aria-hidden="true"
+        className="fixed inset-0 z-40 bg-[rgba(2,6,12,0.72)] backdrop-blur-[2px]"
+        initial={reducedMotion ? false : { opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={reducedMotion ? undefined : { opacity: 0 }}
+        onClick={onClose}
+      />
+      <motion.section
+        key="manual-unsubscribe-dialog"
+        aria-labelledby="manual-unsubscribe-title"
+        aria-modal="true"
+        className="fixed left-1/2 top-1/2 z-50 w-[min(720px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-[28px] border border-white/12 bg-[rgba(7,11,19,0.98)] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.38)]"
+        initial={reducedMotion ? false : { opacity: 0, y: 16, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={reducedMotion ? undefined : { opacity: 0, y: 12, scale: 0.98 }}
+        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+        transition={{ duration: reducedMotion ? 0 : 0.2 }}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-slate-500">Manual unsubscribe</p>
+            <h3 id="manual-unsubscribe-title" className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-white">Manual unsubscribe details</h3>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">Pidgeot found unsubscribe options for these senders, but they still require a manual action.</p>
+          </div>
+          <button
+            className="rounded-2xl border border-white/12 px-3 py-2 text-sm font-semibold text-white transition-colors duration-200 hover:border-white/24 hover:bg-white/8"
+            onClick={onClose}
+            ref={closeButtonRef}
+            type="button"
+          >
+            Close
+          </button>
+        </div>
+
+        <div className="mt-5 max-h-[70vh] space-y-4 overflow-y-auto pr-1">
+          {groups.map((group) => {
+            const manualOperations = getManualUnsubscribeOperations(group);
+
+            return (
+              <div key={`manual-${group.id}`} className="rounded-[24px] border border-white/10 bg-white/5 p-4">
+                <p className="text-lg font-semibold text-white">{getGroupTitle(group)}</p>
+                <p className="mt-1 text-sm text-slate-400">{group.representativeAddress || "Representative address unavailable"}</p>
+                <p className="mt-3 text-sm leading-6 text-slate-300">Pidgeot found an unsubscribe option, but it requires a manual action.</p>
+
+                <div className="mt-4 grid gap-3">
+                  {manualOperations.length > 0 ? manualOperations.map((operation) => (
+                    <div key={operation.id} className="rounded-[20px] border border-white/10 bg-[rgba(7,11,19,0.76)] p-3">
+                      <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500">Unsubscribe method</p>
+                      <p className="mt-1 font-medium text-white">{formatManualUnsubscribeMethod(operation)}</p>
+
+                      {operation.mailto?.recipient ? (
+                        <p className="mt-2 text-sm text-slate-300">{operation.mailto.recipient}</p>
+                      ) : null}
+                      {operation.host ? (
+                        <p className="mt-2 text-sm text-slate-300">{`${operation.host}${operation.path || ""}`}</p>
+                      ) : null}
+                      {operation.mailto?.subject ? (
+                        <p className="mt-2 text-xs text-slate-400">Subject: {operation.mailto.subject}</p>
+                      ) : null}
+
+                      <div className="mt-3 flex flex-wrap items-center gap-3">
+                        {operation.type === "HTTPS_LINK" && operation.target ? (
+                          <a
+                            className="rounded-2xl border border-cyan-300/24 bg-cyan-300/10 px-3 py-2 text-sm font-semibold text-cyan-100 transition-colors duration-200 hover:border-cyan-300/36 hover:bg-cyan-300/16"
+                            href={operation.target}
+                            rel="noreferrer"
+                            target="_blank"
+                          >
+                            Open unsubscribe page
+                          </a>
+                        ) : null}
+                        <span className="text-xs leading-5 text-slate-400">{getManualUnsubscribeReason(operation)}</span>
+                      </div>
+                    </div>
+                  )) : (
+                    <p className="text-sm text-slate-400">Pidgeot is still loading the manual unsubscribe details for this sender.</p>
+                  )}
+                </div>
+
+                <p className="mt-4 text-xs leading-5 text-slate-500">Pidgeot won&apos;t submit this request automatically.</p>
+              </div>
+            );
+          })}
+        </div>
+      </motion.section>
+    </AnimatePresence>
+  );
 }
 
 function BulkSelectionControls({ allVisibleSelected, disabled, onClearAll, onSelectAll, selectedCount, visibleSelectableCount }) {
@@ -1016,8 +1223,28 @@ function SelectionActionButton({ active, description, disabled, label, onClick }
   );
 }
 
-function SelectionActionBar({ actionSummary, activeDecision, executionRequestState, executionSummary, hasRunningExecution, onDecisionChange, onExecute, reducedMotion, selectedCount, workflowExecutionMode }) {
+function SelectionActionBar({
+  actionSummary,
+  activeDecision,
+  executionRequestState,
+  executionSummary,
+  hasRunningExecution,
+  onDecisionChange,
+  onExecute,
+  onOpenManualDetails,
+  reducedMotion,
+  selectedCount,
+  workflowExecutionMode,
+}) {
   const selectionLabel = formatQuantity(selectedCount, "sender");
+  const unsubscribeButtonDescription = actionSummary.unsubscribe.enabled
+    ? "Automatic unsubscribe available"
+    : actionSummary.unsubscribe.manualGroupCount > 0
+      ? "Manual review only"
+      : "Unavailable for this selection.";
+  const cleanupButtonDescription = actionSummary.cleanup.enabled
+    ? "Unread cleanup available"
+    : "No unread cleanup available.";
   const executionButtonLabel = workflowExecutionMode === "SIMULATED"
     ? activeDecision === "unsubscribe"
       ? "Run simulated unsubscribe"
@@ -1043,49 +1270,45 @@ function SelectionActionBar({ actionSummary, activeDecision, executionRequestSta
           <h3 className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-white">{selectionLabel} selected</h3>
           <p className="mt-2 text-sm leading-6 text-slate-300">What would you like Pidgeot to do with these senders?</p>
         </div>
-        <div className="grid gap-2 text-sm text-slate-300">
-          <p>
-            <span className="font-semibold text-white">Unsubscribe:</span>{" "}
-            {actionSummary.unsubscribe.enabled ? actionSummary.unsubscribe.description : "Unavailable for this selection."}
-          </p>
-          <p>
-            <span className="font-semibold text-white">Delete unread:</span>{" "}
-            {actionSummary.cleanup.enabled ? actionSummary.cleanup.description : "No unread cleanup available."}
-          </p>
+        <div className="grid gap-2">
+          <SelectionSummaryRow
+            action={actionSummary.unsubscribe}
+            onOpenManualDetails={onOpenManualDetails}
+          />
+          <SelectionSummaryRow action={actionSummary.cleanup} />
         </div>
       </div>
 
       <div className="mt-4 flex flex-col gap-3 lg:flex-row">
         <SelectionActionButton
           active={activeDecision === "unsubscribe"}
-          description={actionSummary.unsubscribe.description}
+          description={unsubscribeButtonDescription}
           disabled={!actionSummary.unsubscribe.enabled || actionLocked}
           label={actionSummary.unsubscribe.label}
           onClick={() => onDecisionChange(activeDecision === "unsubscribe" ? null : "unsubscribe")}
         />
         <SelectionActionButton
           active={activeDecision === "cleanup"}
-          description={actionSummary.cleanup.description}
+          description={cleanupButtonDescription}
           disabled={!actionSummary.cleanup.enabled || actionLocked}
           label={actionSummary.cleanup.label}
           onClick={() => onDecisionChange(activeDecision === "cleanup" ? null : "cleanup")}
         />
       </div>
 
-      {activeDecision ? (
-        <div className="mt-4 rounded-[22px] border border-white/10 bg-black/18 px-4 py-3 text-sm text-slate-300">
-          <p>
-            {activeDecision === "unsubscribe"
-              ? "This selection keeps the real unsubscribe mix intact. Automatic-capable senders stay automatic, and manual-only senders stay manual."
-              : "Delete unread continues to target unread messages from the selected senders only."}
-          </p>
-          {workflowExecutionMode === "SIMULATED" ? (
-            <p className="mt-2 text-cyan-100">SIMULATION MODE — Gmail won&apos;t be changed.</p>
-          ) : null}
-          {executionSummary?.headline ? (
-            <p className="mt-2 text-slate-200">{executionSummary.headline}</p>
-          ) : null}
-          <div className="mt-3 flex flex-wrap gap-3">
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        {workflowExecutionMode === "SIMULATED" ? (
+          <span className="inline-flex items-center rounded-full border border-cyan-300/24 bg-cyan-300/10 px-3 py-2 text-xs font-medium text-cyan-100">
+            SIMULATION MODE — Gmail won&apos;t be changed.
+          </span>
+        ) : null}
+        {executionSummary?.headline ? (
+          <span className="inline-flex items-center rounded-full border border-white/10 bg-white/6 px-3 py-2 text-xs font-medium text-slate-200">
+            {executionSummary.headline}
+          </span>
+        ) : null}
+        {activeDecision ? (
+          <>
             <motion.button
               className={classNames(
                 "rounded-2xl border px-4 py-2.5 text-sm font-semibold transition-[background-color,border-color,transform] duration-200",
@@ -1109,9 +1332,9 @@ function SelectionActionBar({ actionSummary, activeDecision, executionRequestSta
                 Queued and processing follow the live workflow state.
               </span>
             ) : null}
-          </div>
-        </div>
-      ) : null}
+          </>
+        ) : null}
+      </div>
     </motion.section>
   );
 }
@@ -1376,7 +1599,7 @@ function SenderGroupCard({ armedActionType = null, group, mode = "active", reduc
             ? "Unsubscribe available: automatic + manual"
             : unsubscribeAvailability.automaticCount > 0
               ? "Unsubscribe available"
-              : "Unsubscribe available: manual"
+              : "Manual unsubscribe only"
           : "Unsubscribe unavailable",
       }
     : null;
@@ -1580,6 +1803,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   const [selectedIds, setSelectedIds] = useState([]);
   const [selectionDecision, setSelectionDecision] = useState(null);
   const [selectionWorkflow, setSelectionWorkflow] = useState(null);
+  const [manualDetailsOpen, setManualDetailsOpen] = useState(false);
   const [activeResultTab, setActiveResultTab] = useState("active");
   const [sortMode, setSortMode] = useState("discovery");
   const [categoryFilters, setCategoryFilters] = useState([]);
@@ -1607,6 +1831,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   const selectedGroups = selectedIds
     .map((id) => activeGroupById.get(id))
     .filter(Boolean);
+  const selectedManualGroups = selectedGroups.filter((group) => hasManualOnlyUnsubscribeAction(group));
   const selectedGroupIdSet = new Set(selectedGroups.map((group) => group.id));
   const selectedCount = selectedGroups.length;
   const hasSelectedRunningExecution = selectedGroups.some((group) => hasGroupRunningExecution(group));
@@ -1615,6 +1840,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   const visibleResultTab = activeResultTab === "done" && doneSenderGroups.length > 0
     ? "done"
     : "active";
+  const showManualDetailsModal = manualDetailsOpen && selectedManualGroups.length > 0;
   const selectionSnapshot = buildSelectionSnapshot(selectedGroups);
   const selectionActionSummary = getSelectionActionSummary(selectionSnapshot);
   const activeSelectionDecision = selectionDecision === "unsubscribe" && !selectionActionSummary?.unsubscribe.enabled
@@ -1825,6 +2051,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
       return;
     }
 
+    setManualDetailsOpen(false);
     setSelectionDecision(null);
     setSelectedIds([]);
   }
@@ -1870,6 +2097,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
       const payload = await readJson(target, { method: "POST" });
       setScan(payload.scan);
       if (actionType === "start") {
+        setManualDetailsOpen(false);
         setSelectedIds([]);
         setSelectionDecision(null);
         setSelectionWorkflow(null);
@@ -1906,7 +2134,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
 
     const executableGroups = selectedGroups.filter((group) => {
       if (activeSelectionDecision === "unsubscribe") {
-        return Boolean(group?.workflow?.unsubscribeOperationsAvailable || hasExecutionStarted(group?.workflow?.unsubscribeExecution));
+        return hasExecutableUnsubscribeAction(group);
       }
 
       return getGroupCleanupEligibleCount(group) > 0 || hasExecutionStarted(group?.workflow?.cleanupExecution);
@@ -1974,6 +2202,14 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
 
   return (
     <div className="grid gap-6">
+      {showManualDetailsModal ? (
+        <ManualUnsubscribeDetailsModal
+          groups={selectedManualGroups}
+          onClose={() => setManualDetailsOpen(false)}
+          reducedMotion={reducedMotion}
+        />
+      ) : null}
+
       <section className="rounded-[32px] border border-white/12 bg-[rgba(7,11,19,0.84)] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.28)] md:p-6">
         <div className="grid gap-6 xl:grid-cols-[0.88fr_1.12fr] xl:items-start">
           <div className="space-y-5">
@@ -2130,6 +2366,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
               hasRunningExecution={hasSelectedRunningExecution}
               onDecisionChange={setSelectionDecision}
               onExecute={handleSelectionExecution}
+              onOpenManualDetails={() => setManualDetailsOpen(true)}
               reducedMotion={reducedMotion}
               selectedCount={selectedCount}
               workflowExecutionMode={workflowExecutionMode}
@@ -2140,14 +2377,6 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
         {visibleResultTab === "active" ? (
           <div className="mt-5 flex flex-col gap-4 rounded-[24px] border border-white/10 bg-[rgba(8,14,25,0.72)] p-4 lg:flex-row lg:items-end lg:justify-between">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-4">
-              <BulkSelectionControls
-                allVisibleSelected={allVisibleActionableSelected}
-                disabled={hasSelectedRunningExecution}
-                onClearAll={clearSelection}
-                onSelectAll={selectAllVisibleActionable}
-                selectedCount={selectedCount}
-                visibleSelectableCount={visibleActionableGroupIds.length}
-              />
               <label className="grid min-w-[240px] gap-2">
                 <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">Sort by</span>
                 <span className="relative flex min-w-[240px] items-center">
@@ -2199,6 +2428,15 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
                   </button>
                 </div>
               </details>
+
+              <BulkSelectionControls
+                allVisibleSelected={allVisibleActionableSelected}
+                disabled={hasSelectedRunningExecution}
+                onClearAll={clearSelection}
+                onSelectAll={selectAllVisibleActionable}
+                selectedCount={selectedCount}
+                visibleSelectableCount={visibleActionableGroupIds.length}
+              />
             </div>
 
             <div className="grid gap-1 text-right">

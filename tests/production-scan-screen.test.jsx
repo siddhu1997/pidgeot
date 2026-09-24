@@ -164,4 +164,127 @@ describe("production scan screen", () => {
     });
     expect(screen.getAllByText("0").length).toBeGreaterThan(0);
   });
+
+  it("keeps manual-only unsubscribe informational and opens manual details", async () => {
+    render(createElement(ProductionScanScreen, {
+      authConfigured: true,
+      autoAdvance: false,
+      email: "user@example.com",
+      gmailAuthState: "GMAIL_READY",
+      initialScan: {
+        senderGroups: [
+          {
+            attention: "LOW",
+            category: "PROMOTIONAL",
+            id: "group-manual",
+            messageCount: 2,
+            representativeAddress: "manual@example.com",
+            representativeDomain: "example.com",
+            senderDomains: ["example.com"],
+            unreadCount: 0,
+            unsubscribe: {
+              mechanisms: [{ id: "manual-mechanism", manualActionRequired: true, status: "MANUAL_ACTION_REQUIRED", type: "HTTPS_LINK" }],
+              resolutionStatus: "MANUAL_ACTION_REQUIRED",
+            },
+            workflow: {
+              cleanupEligibleCount: 0,
+              cleanupExecution: { execution: null, state: "NOT_STARTED" },
+              manualUnsubscribeOperations: [{ host: "example.com", id: "manual-op", path: "/unsubscribe", status: "MANUAL_ACTION_REQUIRED", target: "https://example.com/unsubscribe", type: "HTTPS_LINK" }],
+              unsubscribeAutomaticOperationCount: 0,
+              unsubscribeExecution: { execution: null, state: "NOT_STARTED" },
+              unsubscribeOperationsAvailable: false,
+            },
+          },
+        ],
+        state: "COMPLETE",
+      },
+      workflowExecutionMode: "SIMULATED",
+    }));
+
+    fireEvent.click(screen.getByRole("button", { name: /manual@example.com/i }));
+
+    expect(screen.getByRole("button", { name: /^Unsubscribe/i })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /Run simulated unsubscribe/i })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "1 sender manual" }));
+
+    expect(screen.getByRole("dialog", { name: "Manual unsubscribe details" })).toBeInTheDocument();
+    expect(screen.getAllByText("manual@example.com").length).toBeGreaterThan(0);
+    expect(screen.getByRole("link", { name: "Open unsubscribe page" })).toHaveAttribute("href", "https://example.com/unsubscribe");
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Manual unsubscribe details" })).not.toBeInTheDocument();
+    });
+  });
+
+  it("allows mixed selections to execute automatic unsubscribe while exposing manual details separately", () => {
+    render(createElement(ProductionScanScreen, {
+      authConfigured: true,
+      autoAdvance: false,
+      email: "user@example.com",
+      gmailAuthState: "GMAIL_READY",
+      initialScan: {
+        senderGroups: [
+          {
+            attention: "HIGH",
+            category: "PROMOTIONAL",
+            id: "group-auto",
+            messageCount: 4,
+            representativeAddress: "auto@example.com",
+            representativeDomain: "example.com",
+            senderDomains: ["example.com"],
+            unreadCount: 1,
+            unsubscribe: {
+              mechanisms: [{ automatic: true, id: "auto-mechanism", status: "AUTOMATIC", type: "RFC8058_ONE_CLICK" }],
+              resolutionStatus: "AUTOMATIC",
+            },
+            workflow: {
+              cleanupEligibleCount: 1,
+              cleanupExecution: { execution: null, state: "NOT_STARTED" },
+              manualUnsubscribeOperations: [],
+              unsubscribeAutomaticOperationCount: 1,
+              unsubscribeExecution: { execution: null, state: "NOT_STARTED" },
+              unsubscribeOperationsAvailable: true,
+            },
+          },
+          {
+            attention: "LOW",
+            category: "UPDATES",
+            id: "group-manual",
+            messageCount: 2,
+            representativeAddress: "manual@example.com",
+            representativeDomain: "manual.example.com",
+            senderDomains: ["manual.example.com"],
+            unreadCount: 0,
+            unsubscribe: {
+              mechanisms: [{ id: "manual-mechanism", manualActionRequired: true, status: "MANUAL_ACTION_REQUIRED", type: "MAILTO" }],
+              resolutionStatus: "MANUAL_ACTION_REQUIRED",
+            },
+            workflow: {
+              cleanupEligibleCount: 0,
+              cleanupExecution: { execution: null, state: "NOT_STARTED" },
+              manualUnsubscribeOperations: [{ id: "manual-mailto", mailto: { recipient: "manual@example.com", subject: "unsubscribe me" }, status: "MANUAL_ACTION_REQUIRED", type: "MAILTO" }],
+              unsubscribeAutomaticOperationCount: 0,
+              unsubscribeExecution: { execution: null, state: "NOT_STARTED" },
+              unsubscribeOperationsAvailable: false,
+            },
+          },
+        ],
+        state: "COMPLETE",
+      },
+      workflowExecutionMode: "SIMULATED",
+    }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+
+    expect(screen.getByRole("button", { name: /^Unsubscribe/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "1 sender manual" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Run simulated unsubscribe/i })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Unsubscribe/i }));
+
+    expect(screen.getByRole("button", { name: /Run simulated unsubscribe/i })).toBeInTheDocument();
+  });
 });
