@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getRequiredCurrentAuthSession } from "@/lib/auth/current-session";
 import { assertDevelopmentLabAvailable, getDevLabPublicStatus } from "@/lib/dev-lab/config";
+import { recoverDevelopmentWorkflowScenario } from "@/lib/dev-lab/workflow-scenario-guard";
 import { buildWorkflowScenarioOutcomes } from "@/lib/dev-lab/workflow-scenario";
 import {
   clearWorkflowScenario,
@@ -9,6 +10,7 @@ import {
   setWorkflowScenario,
 } from "@/lib/dev-lab/workflow-scenario-store";
 import { createScanService } from "@/lib/scanning/scanner";
+import { createWorkflowService } from "@/lib/workflow/service";
 
 export const runtime = "nodejs";
 
@@ -65,6 +67,19 @@ export async function POST(request) {
 
       return NextResponse.json({
         lab: getDevLabPublicStatus(),
+      });
+    }
+
+    if (action === "recover") {
+      const session = await getRequiredCurrentAuthSession();
+      const recoveredWorkflow = recoverDevelopmentWorkflowScenario(session);
+      const workflow = recoveredWorkflow || createWorkflowService().getWorkflowStatus({ session });
+
+      return NextResponse.json({
+        lab: getDevLabPublicStatus(),
+        recovered: Boolean(recoveredWorkflow),
+        scan: workflow?.scan || null,
+        workflow,
       });
     }
 

@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 
 import { getRequiredCurrentAuthSession } from "@/lib/auth/current-session";
 import { createCleanupExecutionService } from "@/lib/cleanup/execution-service";
-import { getDevelopmentScenarioWorkflow } from "@/lib/dev-lab/workflow-scenario-guard";
+import { getServerAppConfig } from "@/lib/config";
+import { recoverDevelopmentWorkflowScenario } from "@/lib/dev-lab/workflow-scenario-guard";
 import { createScanService } from "@/lib/scanning/scanner";
 
 export const runtime = "nodejs";
@@ -51,15 +52,18 @@ export async function POST(request) {
     }
 
     const session = await getRequiredCurrentAuthSession();
-    const scenarioWorkflow = getDevelopmentScenarioWorkflow(session);
 
-    if (scenarioWorkflow) {
-      const group = (scenarioWorkflow.scan?.senderGroups || []).find((entry) => entry.id === body.senderGroupId);
+    if (!getServerAppConfig().isProduction) {
+      const recoveredWorkflow = recoverDevelopmentWorkflowScenario(session);
 
-      return NextResponse.json({
-        cleanupExecution: sanitizeCleanupExecution(group?.workflow?.cleanupExecution?.execution || null),
-        scan: scenarioWorkflow.scan,
-      });
+      if (recoveredWorkflow) {
+        return NextResponse.json({
+          cleanupExecution: null,
+          recovered: true,
+          scan: recoveredWorkflow.scan,
+          workflow: recoveredWorkflow,
+        });
+      }
     }
 
     const cleanupExecution = await createCleanupExecutionService().executeSenderGroupCleanup({

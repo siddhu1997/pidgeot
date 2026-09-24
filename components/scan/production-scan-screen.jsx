@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from "motion/react";
@@ -1074,6 +1073,12 @@ function TooltipTag({ children, className, description }) {
   );
 }
 
+const SESSION_RECOVERY_KINDS = new Set(["reauth", "lease_expired", "paused"]);
+
+function shouldRenderSenderRecoveryAction(recovery) {
+  return Boolean(recovery?.actionLabel && !SESSION_RECOVERY_KINDS.has(recovery.kind));
+}
+
 function RecoveryActionButton({ disabled, label, onClick }) {
   return (
     <button
@@ -1229,7 +1234,7 @@ function UnsubscribeSeverSurface({
       <div className="mt-3">
         <p className={classNames("font-medium", copy.toneAccent)}>{recovery?.title || copy.headline}</p>
         <p className="mt-1 text-xs leading-5 text-slate-300">{recovery?.body || copy.body}</p>
-        {recovery?.actionLabel && typeof onRecoveryAction === "function" ? (
+        {shouldRenderSenderRecoveryAction(recovery) && typeof onRecoveryAction === "function" ? (
           <div className="mt-3">
             <RecoveryActionButton
               label={recovery.actionLabel}
@@ -2724,7 +2729,7 @@ function SenderGroupCard({
                 {(() => {
                   const recovery = actionType === "unsubscribe" ? unsubscribeRecovery : cleanupRecovery;
 
-                  if (!recovery?.actionLabel || typeof onRecoveryAction !== "function") {
+                  if (!shouldRenderSenderRecoveryAction(recovery) || typeof onRecoveryAction !== "function") {
                     return null;
                   }
 
@@ -2782,7 +2787,6 @@ async function readJson(url, options) {
 }
 
 export function ProductionScanScreen({ authConfigured, autoAdvance = true, email, gmailAuthState, initialScan }) {
-  const router = useRouter();
   const reducedMotion = useReducedMotion();
   const [scan, setScan] = useState(initialScan);
   const [errorMessage, setErrorMessage] = useState(null);
@@ -2801,6 +2805,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   const [surfaceFilters, setSurfaceFilters] = useState([]);
   const [scanDetailsExpanded, setScanDetailsExpanded] = useState(false);
   const autoAdvanceVersionRef = useRef(0);
+  const suppressAutoAdvanceAfterScenarioRecoveryRef = useRef(false);
 
   const senderGroups = scan?.senderGroups || [];
   const activeSelectionWorkflow = selectionWorkflow?.scan?.scanId === scan?.scanId
@@ -2828,6 +2833,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   const pauseSettling = scan?.state === SCAN_STATES.PAUSED && hasPendingPauseWork(scan);
   const pausing = requestState === "pause" || pauseSettling;
   const activeScan = Boolean(scan && ACTIVE_SCAN_STATES.has(scan.state));
+  const developmentScenarioActive = Boolean(activeSelectionWorkflow?.developmentWorkflowScenario);
   const filteredGroups = activeSenderGroups.filter((group) => {
     const categoryMatch = categoryFilters.length === 0
       || categoryFilters.includes(group.category || SENDER_CATEGORIES.UNKNOWN);
@@ -2894,6 +2900,27 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
         visualMode: "paused",
       }
     : presentation;
+  const hideSessionRecoveryHeaderAction = Boolean(
+    visibleResultTab === "active"
+    && selectedCount > 0
+    && selectionActionSummary
+    && SESSION_RECOVERY_KINDS.has(selectionRecovery?.kind)
+    && (
+      (
+        selectionRecovery.kind === "lease_expired"
+        && effectivePresentation.actionType === "resume"
+        && scan?.pauseReason === SCAN_PAUSE_REASONS.LEASE_EXPIRED
+      )
+      || (
+        selectionRecovery.kind === "paused"
+        && effectivePresentation.actionType === "resume"
+      )
+      || (
+        selectionRecovery.kind === "reauth"
+        && effectivePresentation.actionType === "gmail-upgrade"
+      )
+    ),
+  );
   const discoveryFacts = [
     Number.isFinite(scan?.counters?.messagesNormalized)
       ? `${formatQuantity(scan.counters.messagesNormalized, "message")} discovered`
@@ -3047,7 +3074,13 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   }, [pauseSettling, requestState, scan]);
 
   useEffect(() => {
-    if (!autoAdvance || !activeScan || requestState !== "idle") {
+    if (
+      !autoAdvance
+      || !activeScan
+      || requestState !== "idle"
+      || developmentScenarioActive
+      || suppressAutoAdvanceAfterScenarioRecoveryRef.current
+    ) {
       return undefined;
     }
 
@@ -3081,7 +3114,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [activeScan, autoAdvance, requestState]);
+  }, [activeScan, autoAdvance, developmentScenarioActive, requestState]);
 
   async function refreshStatus() {
     try {
@@ -3203,9 +3236,64 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
     });
   }
 
+  function markScenarioRecoveryTerminal() {
+    suppressAutoAdvanceAfterScenarioRecoveryRef.current = true;
+    autoAdvanceVersionRef.current += 1;
+  }
+
+  async function applyRecoveredWorkflow(payload) {
+    markScenarioRecoveryTerminal();
+
+    if (payload?.workflow) {
+      setSelectionWorkflow(payload.workflow);
+      if (payload.workflow.scan) {
+        setScan(payload.workflow.scan);
+        return;
+      }
+    }
+
+    if (payload?.scan) {
+      setScan(payload.scan);
+    }
+  }
+
+  async function recoverDevelopmentScenarioOverlay() {
+    try {
+      return await readJson("/api/dev-lab/workflow-scenario", {
+        body: JSON.stringify({ action: "recover" }),
+        method: "POST",
+      });
+    } catch (error) {
+      if (error?.code === "development_only") {
+        return { recovered: false };
+      }
+
+      throw error;
+    }
+  }
+
   async function handleScanAction(actionType) {
+    if (actionType === "resume" || actionType === "gmail-upgrade" || actionType === "start") {
+      try {
+        autoAdvanceVersionRef.current += 1;
+        setRequestState(actionType);
+        const recovered = await recoverDevelopmentScenarioOverlay();
+
+        if (recovered?.recovered) {
+          await applyRecoveredWorkflow(recovered);
+          setErrorMessage(null);
+          return;
+        }
+      } catch (error) {
+        setErrorMessage(error.message || "The scan action could not be completed.");
+        return;
+      } finally {
+        setRequestState("idle");
+      }
+    }
+
     if (actionType === "gmail-upgrade") {
-      router.push("/api/auth/google/gmail/start");
+      window.location.assign(new URL("/api/auth/google/gmail/start", window.location.origin).toString());
       return;
     }
 
@@ -3224,8 +3312,22 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
     try {
       autoAdvanceVersionRef.current += 1;
       setRequestState(actionType);
+      if (actionType === "resume" || actionType === "start") {
+        suppressAutoAdvanceAfterScenarioRecoveryRef.current = false;
+      }
       const payload = await readJson(target, { method: "POST" });
+      if (payload.recovered) {
+        await applyRecoveredWorkflow(payload);
+        setErrorMessage(null);
+        return;
+      }
       setScan(payload.scan);
+      if (payload.workflow) {
+        setSelectionWorkflow(payload.workflow);
+        if (payload.workflow.scan) {
+          setScan(payload.workflow.scan);
+        }
+      }
       if (actionType === "start") {
         setManualDetailsGroups([]);
         setManualHandledIds(new Set());
@@ -3287,6 +3389,12 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
         method: "POST",
       });
 
+      if (payload.recovered) {
+        await applyRecoveredWorkflow(payload);
+        setErrorMessage(null);
+        return;
+      }
+
       setSelectionWorkflow(payload.workflow || null);
       if (payload.workflow?.scan) {
         setScan(payload.workflow.scan);
@@ -3311,18 +3419,45 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
     await executeWorkflowGroups(selectedGroups, activeSelectionDecision);
   }
 
-  function handleRecoveryAction(recovery, group = null) {
+  async function handleRecoveryAction(recovery, group = null) {
     if (!recovery?.actionType) {
-      return;
-    }
-
-    if (recovery.actionType === "resume" || recovery.actionType === "gmail-upgrade") {
-      handleScanAction(recovery.actionType);
       return;
     }
 
     if (recovery.actionType === "manual") {
       openManualWizard(group ? [group] : selectedManualGroups);
+      return;
+    }
+
+    if (recovery.actionType === "retry" && (executionRequestState !== "idle" || hasSelectedRunningExecution)) {
+      return;
+    }
+
+    if (recovery.actionType === "resume" || recovery.actionType === "gmail-upgrade" || recovery.actionType === "retry") {
+      try {
+        if (recovery.actionType === "retry") {
+          setExecutionRequestState("submitting");
+        }
+
+        const recovered = await recoverDevelopmentScenarioOverlay();
+
+        if (recovered?.recovered) {
+          await applyRecoveredWorkflow(recovered);
+          setErrorMessage(null);
+          return;
+        }
+      } catch (error) {
+        setErrorMessage(error.message || "The recovery action could not be completed.");
+        return;
+      } finally {
+        if (recovery.actionType === "retry") {
+          setExecutionRequestState("idle");
+        }
+      }
+    }
+
+    if (recovery.actionType === "resume" || recovery.actionType === "gmail-upgrade") {
+      handleScanAction(recovery.actionType);
       return;
     }
 
@@ -3459,7 +3594,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
             ) : null}
 
             <div className="flex flex-wrap gap-3">
-              {effectivePresentation.actionLabel ? (
+              {effectivePresentation.actionLabel && !hideSessionRecoveryHeaderAction ? (
                 <button
                   className={classNames(
                     "rounded-2xl px-5 py-3 text-sm font-semibold shadow-[0_12px_26px_rgba(0,0,0,0.18)] transition-transform duration-200 hover:-translate-y-0.5 disabled:translate-y-0 disabled:opacity-80",
