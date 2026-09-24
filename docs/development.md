@@ -46,6 +46,82 @@ Recommended local OAuth workflow:
 
 Quick Tunnels are acceptable for temporary development but should not be treated as a production design decision.
 
+## Development Lab
+
+`/playground` is the Development Lab in development mode. Production builds render the route as unavailable, and every `/api/dev-lab/*` handler independently rejects production requests.
+
+This infrastructure sends real mail to a configured test inbox. It is development-only. Do not enable it in production.
+
+### Configure the development mail sender
+
+Add these server-only variables to `.env.local`. Do not put SMTP credentials in client code, cookies, or logs. Copy the keys from `.env.example` and fill only the local file.
+
+```bash
+DEV_MAIL_ENABLED=true
+DEV_MAIL_RECIPIENT=your-test-inbox@gmail.com
+DEV_MAIL_FROM_DOMAIN=pidgeot-dev.siddharths.co.in
+DEV_MAIL_BREVO_SMTP_HOST=smtp-relay.brevo.com
+DEV_MAIL_BREVO_SMTP_PORT=587
+DEV_MAIL_BREVO_SMTP_USER=
+DEV_MAIL_BREVO_SMTP_PASSWORD=
+DEV_MAIL_MAILGUN_SMTP_HOST=smtp.eu.mailgun.org
+DEV_MAIL_MAILGUN_SMTP_PORT=587
+DEV_MAIL_MAILGUN_SMTP_USER=
+DEV_MAIL_MAILGUN_SMTP_PASSWORD=
+DEV_MAIL_UNSUBSCRIBE_BASE_URL=https://timmy-sclerenchymatous-unfanatically.ngrok-free.dev
+DEV_MAIL_MAX_MESSAGES_PER_GENERATION=50
+DEV_MAIL_MAX_SEND_CONCURRENCY=3
+DEV_MAIL_MAX_SEND_ATTEMPTS=2
+```
+
+The recipient is always taken from `DEV_MAIL_RECIPIENT`. The browser cannot supply an address.
+
+Delivery goes through the development mail adapter: Brevo first, then Mailgun only for confirmed transient provider failures. Permanent errors (auth, invalid sender, invalid recipient, 5xx) are not failed over. Ambiguous timeouts after DATA are not retried, to avoid duplicates.
+
+Generated From addresses use `DEV_MAIL_FROM_DOMAIN`. That domain must be authenticated with Brevo and Mailgun so Gmail keeps distinct sender identities.
+
+HTTPS unsubscribe headers use `DEV_MAIL_UNSUBSCRIBE_BASE_URL`, never localhost. The production unsubscribe resolver still classifies those URLs normally.
+
+### Start the lab
+
+```bash
+npm run dev
+```
+
+Open [http://localhost:3000/playground](http://localhost:3000/playground).
+
+### Generate a dataset
+
+1. Set sender count, messages per sender, unread ratio, unsubscribe profile, category profile, and seed.
+2. Click **Generate promotional mail**.
+3. The lab reports how many messages were submitted to SMTP. That is not proof Gmail received them.
+4. Open the configured test inbox, then run a normal Pidgeot scan from `/`.
+
+### Hard limits
+
+- max 10 unique senders
+- max 10 messages per sender
+- max 50 messages total (`DEV_MAIL_MAX_MESSAGES_PER_GENERATION`)
+- max send concurrency 3
+- max send attempts 2 (primary plus one failover)
+- seed `1`–`999999`
+
+These limits are enforced server-side.
+
+### Development unsubscribe endpoint
+
+Generated RFC8058 and HTTPS-manual messages point at:
+
+`${DEV_MAIL_UNSUBSCRIBE_BASE_URL}/api/dev-lab/unsubscribe?token=…`
+
+The handler exists only in development. It accepts a generated opaque token, records a process-local hit, and does nothing else. It is not a generic HTTP proxy, does not accept target URLs, and does not call third-party unsubscribe services.
+
+The existing production unsubscribe resolver still processes the URL when Pidgeot scans the Gmail message. There is no localhost allowlist and no development SSRF bypass.
+
+### Warning
+
+This lab delivers real email. Keep `DEV_MAIL_ENABLED` off unless you intend to send mail to the configured test inbox. Never commit SMTP passwords.
+
 ## Current limitations
 
 - Gmail scanning is process-local and request-driven in Phase 2B; it is not backed by durable storage or workers.

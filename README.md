@@ -93,6 +93,7 @@ Current variables:
 - `GOOGLE_CLIENT_ID`: Google OAuth client ID
 - `GOOGLE_CLIENT_SECRET`: Google OAuth client secret
 - `GOOGLE_REDIRECT_URI`: configured OAuth callback URL
+- Development Lab mail variables (`DEV_MAIL_*`): documented in [docs/development.md](docs/development.md). Development-only. Never required for production.
 
 ## Commands
 

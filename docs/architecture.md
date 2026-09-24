@@ -22,6 +22,8 @@ Pidgeot is designed to be:
 - `lib/unsubscribe/`: standards-first unsubscribe detection and execution
 - `lib/sessions/`: process-local active session and later snapshot abstractions
 - `lib/security/`: URL validation, cookie rules, CSRF, sanitization helpers
+- `lib/dev-lab/`: development-only mail generation and unsubscribe target. Never imported by production scanner, classifier, grouping, OAuth, or execution code.
+- `lib/dev-mail/`: development-only Brevo/Mailgun adapter, failover, and provider-neutral message model. Never imported by production scanner, classifier, grouping, OAuth, or execution code.
 
 ## Storage model
 
