@@ -162,7 +162,7 @@ describe("production scan screen", () => {
     expect(screen.getByRole("tab", { name: /Done 1/i })).toBeInTheDocument();
 
     const sortLabel = screen.getByText("Sort by");
-    const filterLabel = screen.getByText("Filter by category");
+    const filterLabel = screen.getByText("Filter");
     const selectAll = screen.getByRole("button", { name: "Select all" });
     const clearAll = screen.getByRole("button", { name: "Clear all" });
 
@@ -221,14 +221,14 @@ describe("production scan screen", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "View instructions" }));
 
-    expect(screen.getByRole("dialog", { name: "Manual unsubscribe details" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Clear these senders" })).toBeInTheDocument();
     expect(screen.getAllByText("manual@example.com").length).toBeGreaterThan(0);
     expect(screen.getByRole("link", { name: "Open unsubscribe page" })).toHaveAttribute("href", "https://example.com/unsubscribe");
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
     await waitFor(() => {
-      expect(screen.queryByRole("dialog", { name: "Manual unsubscribe details" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("dialog", { name: "Clear these senders" })).not.toBeInTheDocument();
     });
   });
 
@@ -437,7 +437,7 @@ describe("production scan screen", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "View instructions" }));
 
-    expect(screen.getByRole("dialog", { name: "Manual unsubscribe details" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Clear these senders" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "1 sender selected" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Open unsubscribe page" })).not.toBeInTheDocument();
     expect(screen.queryByText("http://example.com/leave")).not.toBeInTheDocument();
@@ -447,7 +447,7 @@ describe("production scan screen", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
     await waitFor(() => {
-      expect(screen.queryByRole("dialog", { name: "Manual unsubscribe details" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("dialog", { name: "Clear these senders" })).not.toBeInTheDocument();
     });
     expect(screen.getByRole("heading", { name: "1 sender selected" })).toBeInTheDocument();
     expect(screen.getByText("Manual action required")).toBeInTheDocument();

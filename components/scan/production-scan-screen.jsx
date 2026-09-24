@@ -20,6 +20,12 @@ import {
   getGroupTitle,
   getUnsubscribeLabel,
 } from "@/components/scan/production-scan-model";
+import { ManualUnsubscribeWizard } from "@/components/scan/manual-unsubscribe-wizard";
+import {
+  getManualSenderIdentity,
+  isPreviouslyManualHandled,
+  rememberManualHandled,
+} from "@/lib/workflow/manual-unsubscribe-memory";
 
 function classNames(...items) {
   return items.filter(Boolean).join(" ");
@@ -44,6 +50,27 @@ const CATEGORY_TOOLTIPS = {
   [SENDER_CATEGORIES.UPDATES]: "Recurring service or product updates.",
   [SENDER_CATEGORIES.UNKNOWN]: "Pidgeot could not confidently classify this sender.",
 };
+
+const FILTER_CATEGORY_EXPLANATIONS = {
+  [SENDER_CATEGORIES.NEWSLETTER]: "Recurring mailing/list signals associated with newsletters.",
+  [SENDER_CATEGORIES.PROMOTIONAL]: "Promotional or marketing-oriented mailing signals.",
+  [SENDER_CATEGORIES.SOCIAL]: "Signals associated with social or community notifications.",
+  [SENDER_CATEGORIES.NOTIFICATION]: "Service or event notification signals.",
+  [SENDER_CATEGORIES.TRANSACTIONAL]: "Strong evidence of account or transaction-related mail.",
+  [SENDER_CATEGORIES.UPDATES]: "Recurring informational or service updates that don't meet stronger category evidence.",
+  [SENDER_CATEGORIES.UNKNOWN]: "Not enough consistent evidence to classify this sender.",
+};
+
+const UNSUBSCRIBE_PATH_FILTER_OPTIONS = [
+  { explanation: "Pidgeot can submit this unsubscribe request for you.", id: "automatic", label: "Automatic unsubscribe" },
+  { explanation: "These senders require you to open the unsubscribe page yourself.", id: "manual", label: "Manual unsubscribe" },
+];
+
+const SURFACE_FILTER_OPTIONS = [
+  { explanation: "Pidgeot keeps mail that appears financially sensitive out of cleanup actions.", id: "sensitive", label: "Sensitive mail" },
+  { explanation: "Senders with cleanup actions available.", id: "cleanup", label: "Cleanup candidates" },
+  { explanation: "Senders Pidgeot found but does not currently consider actionable.", id: "discovery", label: "Discovery only" },
+];
 
 const ATTENTION_TOOLTIPS = {
   HIGH: "Based on observable inbox behavior, not a recommendation.",
@@ -227,20 +254,24 @@ function hasCompletedCleanupAction(group) {
 
 function hasCompletedUnsubscribeAction(group) {
   const unsubscribeExecution = group?.workflow?.unsubscribeExecution || null;
-
-  return Boolean(group?.workflow?.unsubscribeHandledLocally) || (
-    hasExecutionStarted(unsubscribeExecution) && (
-      unsubscribeExecution.state === WORKFLOW_EXECUTION_STATES.COMPLETED ||
-      unsubscribeExecution.state === WORKFLOW_EXECUTION_STATES.PARTIAL_SUCCESS
-    )
+  const automaticExecutionCompleted = hasExecutionStarted(unsubscribeExecution) && (
+    unsubscribeExecution.state === WORKFLOW_EXECUTION_STATES.COMPLETED ||
+    unsubscribeExecution.state === WORKFLOW_EXECUTION_STATES.PARTIAL_SUCCESS
   );
+
+  if (automaticExecutionCompleted) {
+    return true;
+  }
+
+  return Boolean(group?.workflow?.unsubscribeHandledLocally) && !group?.workflow?.manualHandledLocally;
 }
 
 function hasSuccessfulUnsubscribeSimulation(group, execution) {
   const summary = execution?.execution?.summary || null;
   const completedSuccessCount = (summary?.successfulCount || 0) + (summary?.alreadyCompletedCount || 0);
 
-  return Boolean(group?.workflow?.unsubscribeHandledLocally) || completedSuccessCount > 0;
+  return Boolean(group?.workflow?.unsubscribeHandledLocally && !group?.workflow?.manualHandledLocally)
+    || completedSuccessCount > 0;
 }
 
 function hasRemainingCleanupAction(group) {
@@ -289,7 +320,9 @@ function getDoneSummary(group) {
   const fragments = [];
   const cleanupSuccessfulCount = group?.workflow?.cleanupExecution?.execution?.summary?.successfulCount || 0;
 
-  if (hasCompletedUnsubscribeAction(group)) {
+  if (group?.workflow?.manualHandledLocally) {
+    fragments.push("Marked as handled");
+  } else if (hasCompletedUnsubscribeAction(group)) {
     fragments.push("Unsubscribed");
   }
 
@@ -480,6 +513,18 @@ function isSensitiveFinancialGroup(group) {
 
 function isCleanupCandidate(group) {
   return Boolean(group?.cleanupCandidate) && !isSensitiveFinancialGroup(group);
+}
+
+function getGroupSurfaceId(group) {
+  if (isSensitiveFinancialGroup(group)) {
+    return "sensitive";
+  }
+
+  if (isGroupActionable(group)) {
+    return "cleanup";
+  }
+
+  return "discovery";
 }
 
 function getActionabilityLabel(group, selected) {
@@ -811,7 +856,7 @@ function getGroupCleanupEligibleCount(group) {
   return Number.isFinite(group?.unreadCount) ? group.unreadCount : 0;
 }
 
-function getGroupUnsubscribeAvailability(group) {
+function getGroupUnsubscribePath(group) {
   const mechanisms = Array.isArray(group?.unsubscribe?.mechanisms) ? group.unsubscribe.mechanisms : [];
   const actionableMechanisms = mechanisms.filter((mechanism) => (
     AUTOMATIC_UNSUBSCRIBE_STATUSES.has(mechanism?.status) || mechanism?.manualActionRequired || mechanism?.status === "MANUAL_ACTION_REQUIRED"
@@ -822,37 +867,49 @@ function getGroupUnsubscribeAvailability(group) {
   const fallbackManualCount = actionableMechanisms.filter((mechanism) => (
     !AUTOMATIC_UNSUBSCRIBE_STATUSES.has(mechanism?.status) && (mechanism?.manualActionRequired || mechanism?.status === "MANUAL_ACTION_REQUIRED")
   )).length;
-  const manualOperations = Array.isArray(group?.workflow?.manualUnsubscribeOperations)
+  const manualOperations = Array.isArray(group?.workflow?.manualUnsubscribeOperations) && group.workflow.manualUnsubscribeOperations.length > 0
     ? group.workflow.manualUnsubscribeOperations
-    : [];
+    : Array.isArray(group?.manualUnsubscribeOperations)
+      ? group.manualUnsubscribeOperations
+      : [];
   const automaticCount = Number.isFinite(group?.workflow?.unsubscribeAutomaticOperationCount)
     ? group.workflow.unsubscribeAutomaticOperationCount
     : fallbackAutomaticCount;
   const manualCount = manualOperations.length > 0 ? manualOperations.length : fallbackManualCount;
-  const available = automaticCount > 0 || manualCount > 0;
 
   return {
-    available,
+    available: automaticCount > 0 || manualCount > 0,
     automaticCount,
     executable: automaticCount > 0,
     manualCount,
   };
 }
 
+function getGroupUnsubscribeAvailability(group) {
+  if (group?.workflow?.unsubscribeHandledLocally || group?.workflow?.manualHandledLocally) {
+    return {
+      available: false,
+      automaticCount: 0,
+      executable: false,
+      manualCount: 0,
+    };
+  }
+
+  return getGroupUnsubscribePath(group);
+}
+
 function hasExecutableUnsubscribeAction(group) {
   return getGroupUnsubscribeAvailability(group).executable;
 }
 
-function getManualUnsubscribeOperations(group) {
-  return Array.isArray(group?.workflow?.manualUnsubscribeOperations)
-    ? group.workflow.manualUnsubscribeOperations
-    : [];
+function hasManualUnsubscribePath(group) {
+  const unsubscribePath = getGroupUnsubscribePath(group);
+
+  return unsubscribePath.automaticCount === 0 && unsubscribePath.manualCount > 0;
 }
 
 function hasManualOnlyUnsubscribeAction(group) {
-  const unsubscribeAvailability = getGroupUnsubscribeAvailability(group);
-
-  return unsubscribeAvailability.automaticCount === 0 && unsubscribeAvailability.manualCount > 0;
+  return hasManualUnsubscribePath(group) && !group?.workflow?.manualHandledLocally;
 }
 
 function buildSelectionSnapshot(groups) {
@@ -913,16 +970,79 @@ function sortGroupsForDisplay(groups, sortMode) {
     .map((entry) => entry.group);
 }
 
-function getSortDescription(sortMode) {
-  if (sortMode === "unread-desc") {
-    return "Sorted by unsubscribe availability, then unread count high to low.";
+function buildFilterSummary({ categoryFilters, surfaceFilters, unsubscribePathFilters }) {
+  const parts = [
+    categoryFilters.length > 0
+      ? `${categoryFilters.length} ${categoryFilters.length === 1 ? "category" : "categories"}`
+      : null,
+    unsubscribePathFilters.length > 0
+      ? `${unsubscribePathFilters.length} ${unsubscribePathFilters.length === 1 ? "unsubscribe path" : "unsubscribe paths"}`
+      : null,
+    surfaceFilters.length > 0
+      ? `${surfaceFilters.length} ${surfaceFilters.length === 1 ? "surface" : "surfaces"}`
+      : null,
+  ].filter(Boolean);
+
+  if (parts.length === 0) {
+    return "All senders";
   }
 
-  if (sortMode === "unread-asc") {
-    return "Sorted by unsubscribe availability, then unread count low to high.";
+  if (parts.length === 1) {
+    return parts[0];
   }
 
-  return "Sorted by unsubscribe availability, then live discovery order.";
+  return `${parts.length} filters`;
+}
+
+function getFilterContextDescription({ categoryFilters, surfaceFilters, unsubscribePathFilters }) {
+  const activeDimensions = [
+    categoryFilters.length > 0,
+    unsubscribePathFilters.length > 0,
+    surfaceFilters.length > 0,
+  ].filter(Boolean).length;
+
+  if (activeDimensions === 0) {
+    return "Categories are based on observable sender and message patterns.";
+  }
+
+  if (activeDimensions > 1) {
+    return "Showing senders that match the selected filters.";
+  }
+
+  if (categoryFilters.length === 1) {
+    const category = categoryFilters[0];
+    return `${formatLabel(category)} · ${FILTER_CATEGORY_EXPLANATIONS[category]}`;
+  }
+
+  if (categoryFilters.length > 1) {
+    return "Showing senders in the selected categories.";
+  }
+
+  if (unsubscribePathFilters.length === 1 && unsubscribePathFilters[0] === "manual") {
+    return "These senders require you to open the unsubscribe page yourself.";
+  }
+
+  if (unsubscribePathFilters.length === 1 && unsubscribePathFilters[0] === "automatic") {
+    return "Pidgeot can submit this unsubscribe request for you.";
+  }
+
+  if (unsubscribePathFilters.length > 1) {
+    return "Showing senders with the selected unsubscribe paths.";
+  }
+
+  if (surfaceFilters.length === 1 && surfaceFilters[0] === "sensitive") {
+    return "Sensitive mail is kept out of cleanup actions.";
+  }
+
+  if (surfaceFilters.length === 1 && surfaceFilters[0] === "cleanup") {
+    return "Senders with cleanup actions available.";
+  }
+
+  if (surfaceFilters.length === 1 && surfaceFilters[0] === "discovery") {
+    return "Senders Pidgeot found but does not currently consider actionable.";
+  }
+
+  return "Showing senders on the selected surfaces.";
 }
 
 function getSelectionActionSummary(snapshot) {
@@ -967,38 +1087,6 @@ function getSelectionActionSummary(snapshot) {
   };
 }
 
-function formatManualUnsubscribeMethod(operation) {
-  if (operation?.type === "MAILTO") {
-    return "Preaddressed unsubscribe email";
-  }
-
-  if (operation?.type === "HTTPS_LINK") {
-    return "Manual unsubscribe page";
-  }
-
-  if (operation?.type === "HTTP_LINK") {
-    return "Manual unsubscribe link";
-  }
-
-  return formatLabel(operation?.type || "MANUAL_ACTION_REQUIRED");
-}
-
-function getManualUnsubscribeReason(operation) {
-  if (operation?.type === "MAILTO") {
-    return "Pidgeot found a mailto unsubscribe address, which still needs a manual email step.";
-  }
-
-  if (operation?.type === "HTTPS_LINK") {
-    return "Pidgeot found an unsubscribe page, but it is not a one-click request that Pidgeot can submit automatically.";
-  }
-
-  if (operation?.type === "HTTP_LINK") {
-    return "Pidgeot found a web unsubscribe link that is not an automatic one-click HTTPS request, so it stays manual.";
-  }
-
-  return "Pidgeot found an unsubscribe option, but it still requires a manual action.";
-}
-
 function stopNestedCardEvent(event) {
   event.preventDefault();
   event.stopPropagation();
@@ -1016,7 +1104,7 @@ function ManualUnsubscribeChip({ onClick }) {
       onKeyDown={stopNestedCardEvent}
       type="button"
     >
-      Manual unsubscribe
+      View instructions
     </button>
   );
 }
@@ -1066,119 +1154,12 @@ function SelectionSummaryRow({ action, manualDisabled = false, onOpenManualDetai
   );
 }
 
-function ManualUnsubscribeDetailsModal({ groups, onClose, reducedMotion }) {
-  const closeButtonRef = useRef(null);
-
-  useEffect(() => {
-    closeButtonRef.current?.focus();
-  }, []);
-
-  useEffect(() => {
-    function handleKeyDown(event) {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onClose();
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [onClose]);
-
-  return (
-    <AnimatePresence>
-      <motion.div
-        key="manual-unsubscribe-backdrop"
-        aria-hidden="true"
-        className="fixed inset-0 z-40 bg-[rgba(2,6,12,0.72)] backdrop-blur-[2px]"
-        initial={reducedMotion ? false : { opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={reducedMotion ? undefined : { opacity: 0 }}
-        onClick={onClose}
-      />
-      <motion.section
-        key="manual-unsubscribe-dialog"
-        aria-labelledby="manual-unsubscribe-title"
-        aria-modal="true"
-        className="fixed left-1/2 top-1/2 z-50 w-[min(720px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-[28px] border border-white/12 bg-[rgba(7,11,19,0.98)] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.38)]"
-        initial={reducedMotion ? false : { opacity: 0, y: 16, scale: 0.98 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={reducedMotion ? undefined : { opacity: 0, y: 12, scale: 0.98 }}
-        onClick={(event) => event.stopPropagation()}
-        role="dialog"
-        transition={{ duration: reducedMotion ? 0 : 0.2 }}
-      >
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-slate-500">Manual unsubscribe</p>
-            <h3 id="manual-unsubscribe-title" className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-white">Manual unsubscribe details</h3>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">Automatic unsubscribe is unavailable. These senders still have a manual path.</p>
-          </div>
-          <button
-            className="rounded-2xl border border-white/12 px-3 py-2 text-sm font-semibold text-white transition-colors duration-200 hover:border-white/24 hover:bg-white/8"
-            onClick={onClose}
-            ref={closeButtonRef}
-            type="button"
-          >
-            Close
-          </button>
-        </div>
-
-        <div className="mt-5 max-h-[70vh] space-y-4 overflow-y-auto pr-1">
-          {groups.map((group) => {
-            const manualOperations = getManualUnsubscribeOperations(group);
-
-            return (
-              <div key={`manual-${group.id}`} className="rounded-[24px] border border-white/10 bg-white/5 p-4">
-                <p className="text-lg font-semibold text-white">{getGroupTitle(group)}</p>
-                <p className="mt-1 text-sm text-slate-400">{group.representativeAddress || "Representative address unavailable"}</p>
-                <p className="mt-3 text-sm leading-6 text-slate-300">Automatic unsubscribe is unavailable for this sender.</p>
-
-                <div className="mt-4 grid gap-3">
-                  {manualOperations.length > 0 ? manualOperations.map((operation) => (
-                    <div key={operation.id} className="rounded-[20px] border border-white/10 bg-[rgba(7,11,19,0.76)] p-3">
-                      <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500">Unsubscribe method</p>
-                      <p className="mt-1 font-medium text-white">{formatManualUnsubscribeMethod(operation)}</p>
-
-                      {operation.mailto?.recipient ? (
-                        <p className="mt-2 text-sm text-slate-300">{operation.mailto.recipient}</p>
-                      ) : null}
-                      {operation.host ? (
-                        <p className="mt-2 text-sm text-slate-300">{`${operation.host}${operation.path || ""}`}</p>
-                      ) : null}
-                      {operation.mailto?.subject ? (
-                        <p className="mt-2 text-xs text-slate-400">Subject: {operation.mailto.subject}</p>
-                      ) : null}
-
-                      <div className="mt-3 flex flex-wrap items-center gap-3">
-                        {operation.type === "HTTPS_LINK" && operation.target ? (
-                          <a
-                            className="rounded-2xl border border-cyan-300/24 bg-cyan-300/10 px-3 py-2 text-sm font-semibold text-cyan-100 transition-colors duration-200 hover:border-cyan-300/36 hover:bg-cyan-300/16"
-                            href={operation.target}
-                            rel="noreferrer"
-                            target="_blank"
-                          >
-                            Open unsubscribe page
-                          </a>
-                        ) : null}
-                        <span className="text-xs leading-5 text-slate-400">{getManualUnsubscribeReason(operation)}</span>
-                      </div>
-                    </div>
-                  )) : (
-                    <p className="text-sm text-slate-400">Pidgeot is still loading the manual unsubscribe details for this sender.</p>
-                  )}
-                </div>
-
-                <p className="mt-4 text-xs leading-5 text-slate-500">Pidgeot won&apos;t submit this request automatically.</p>
-              </div>
-            );
-          })}
-        </div>
-      </motion.section>
-    </AnimatePresence>
+function toolbarControlClassName(disabled = false) {
+  return classNames(
+    "h-12 rounded-2xl border px-4 text-sm font-semibold transition-colors duration-200",
+    disabled
+      ? "cursor-not-allowed border-white/8 bg-black/18 text-slate-500"
+      : "border-white/12 bg-[rgba(7,11,19,0.92)] text-white hover:border-white/24 hover:bg-white/8",
   );
 }
 
@@ -1186,12 +1167,7 @@ function BulkSelectionControls({ allVisibleSelected, disabled, onClearAll, onSel
   return (
     <div className="flex flex-wrap items-center gap-3">
       <button
-        className={classNames(
-          "rounded-2xl border px-4 py-2 text-sm font-semibold transition-colors duration-200",
-          disabled || visibleSelectableCount === 0 || allVisibleSelected
-            ? "cursor-not-allowed border-white/8 bg-black/18 text-slate-500"
-            : "border-white/12 bg-[rgba(7,11,19,0.92)] text-white hover:border-white/24 hover:bg-white/8",
-        )}
+        className={toolbarControlClassName(disabled || visibleSelectableCount === 0 || allVisibleSelected)}
         disabled={disabled || visibleSelectableCount === 0 || allVisibleSelected}
         onClick={onSelectAll}
         type="button"
@@ -1199,22 +1175,184 @@ function BulkSelectionControls({ allVisibleSelected, disabled, onClearAll, onSel
         Select all
       </button>
       <button
-        className={classNames(
-          "rounded-2xl border px-4 py-2 text-sm font-semibold transition-colors duration-200",
-          disabled || selectedCount === 0
-            ? "cursor-not-allowed border-white/8 bg-black/18 text-slate-500"
-            : "border-white/12 bg-[rgba(7,11,19,0.92)] text-white hover:border-white/24 hover:bg-white/8",
-        )}
+        className={toolbarControlClassName(disabled || selectedCount === 0)}
         disabled={disabled || selectedCount === 0}
         onClick={onClearAll}
         type="button"
       >
         Clear all
       </button>
-      {selectedCount > 0 ? (
-        <p className="text-sm text-slate-400">
-          <span className="font-semibold text-white">{formatQuantity(selectedCount, "sender group")}</span> selected
-        </p>
+    </div>
+  );
+}
+
+function FilterOptionRow({ checked, explanation, label, onToggle }) {
+  return (
+    <div className="flex items-center gap-2 rounded-2xl border border-white/8 bg-white/4 px-3 py-2.5">
+      <label className="flex min-w-0 flex-1 cursor-pointer items-center justify-between gap-3 text-sm text-slate-200">
+        <span>{label}</span>
+        <input
+          checked={checked}
+          className="h-4 w-4 accent-cyan-300"
+          onChange={onToggle}
+          type="checkbox"
+        />
+      </label>
+      <TooltipTag
+        className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-white/16 bg-white/8 text-[10px] font-semibold text-slate-300"
+        description={explanation}
+      >
+        i
+      </TooltipTag>
+    </div>
+  );
+}
+
+function FilterMenu({
+  categoryFilters,
+  onClearFilters,
+  onToggleCategory,
+  onToggleSurface,
+  onToggleUnsubscribePath,
+  selectedFilterSummary,
+  surfaceFilters,
+  unsubscribePathFilters,
+}) {
+  const rootRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  const [pane, setPane] = useState("root");
+
+  function closeMenu() {
+    setOpen(false);
+    setPane("root");
+  }
+
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    function handlePointerDown(event) {
+      if (!rootRef.current?.contains(event.target)) {
+        closeMenu();
+      }
+    }
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeMenu();
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  function toggleOpen() {
+    if (open) {
+      closeMenu();
+      return;
+    }
+
+    setPane("root");
+    setOpen(true);
+  }
+
+  return (
+    <div className="relative grid gap-2" ref={rootRef}>
+      <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">Filter</span>
+      <button
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        className={classNames(
+          toolbarControlClassName(),
+          "flex min-w-[200px] items-center justify-between gap-3 text-left font-normal",
+          open ? "border-cyan-300/40" : null,
+        )}
+        onClick={toggleOpen}
+        type="button"
+      >
+        <span className="truncate">{selectedFilterSummary}</span>
+        <span className={classNames("text-slate-500 transition-transform duration-150", open ? "rotate-180" : null)}>▾</span>
+      </button>
+      {open ? (
+        <div className="absolute left-0 top-[calc(100%+0.75rem)] z-20 w-[280px] rounded-[24px] border border-white/12 bg-[rgba(7,11,19,0.98)] p-3 shadow-[0_18px_40px_rgba(0,0,0,0.32)]">
+          {pane === "root" ? (
+            <div className="grid gap-2">
+              {[
+                { id: "path", label: "Unsubscribe path" },
+                { id: "category", label: "Category" },
+                { id: "surface", label: "Surface" },
+              ].map((dimension) => (
+                <button
+                  key={dimension.id}
+                  className="flex w-full items-center justify-between rounded-2xl border border-white/8 bg-white/4 px-3 py-2.5 text-left text-sm text-slate-200 transition-colors duration-150 hover:bg-white/8"
+                  onClick={() => setPane(dimension.id)}
+                  type="button"
+                >
+                  <span>{dimension.label}</span>
+                  <span className="text-slate-500">›</span>
+                </button>
+              ))}
+              <button
+                className="mt-1 w-full rounded-2xl border border-white/12 px-3 py-2 text-sm font-semibold text-white transition-colors duration-200 hover:border-white/24 hover:bg-white/8"
+                onClick={() => {
+                  onClearFilters();
+                  setPane("root");
+                }}
+                type="button"
+              >
+                Clear filters
+              </button>
+            </div>
+          ) : (
+            <div className="grid gap-2">
+              <button
+                className="flex items-center gap-2 rounded-2xl px-1 py-1 text-left text-sm font-semibold text-white transition-colors duration-150 hover:bg-white/8"
+                onClick={() => setPane("root")}
+                type="button"
+              >
+                <span aria-hidden="true">←</span>
+                <span>
+                  {pane === "category" ? "Category" : pane === "path" ? "Unsubscribe path" : "Surface"}
+                </span>
+              </button>
+              {pane === "category" ? CATEGORY_FILTER_OPTIONS.map((category) => (
+                <FilterOptionRow
+                  key={category}
+                  checked={categoryFilters.includes(category)}
+                  explanation={FILTER_CATEGORY_EXPLANATIONS[category]}
+                  label={formatLabel(category)}
+                  onToggle={() => onToggleCategory(category)}
+                />
+              )) : null}
+              {pane === "path" ? UNSUBSCRIBE_PATH_FILTER_OPTIONS.map((option) => (
+                <FilterOptionRow
+                  key={option.id}
+                  checked={unsubscribePathFilters.includes(option.id)}
+                  explanation={option.explanation}
+                  label={option.label}
+                  onToggle={() => onToggleUnsubscribePath(option.id)}
+                />
+              )) : null}
+              {pane === "surface" ? SURFACE_FILTER_OPTIONS.map((option) => (
+                <FilterOptionRow
+                  key={option.id}
+                  checked={surfaceFilters.includes(option.id)}
+                  explanation={option.explanation}
+                  label={option.label}
+                  onToggle={() => onToggleSurface(option.id)}
+                />
+              )) : null}
+            </div>
+          )}
+        </div>
       ) : null}
     </div>
   );
@@ -1236,7 +1374,7 @@ function ManualUnsubscribeInfoCard({ disabled, onOpenManualDetails }) {
         onClick={onOpenManualDetails}
         type="button"
       >
-        View instructions
+        Review manually
       </button>
     </div>
   );
@@ -1349,6 +1487,16 @@ function SelectionActionBar({
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
+        {actionSummary.unsubscribe.manualGroupCount > 0 && !manualOnlyUnsubscribe ? (
+          <button
+            className="rounded-2xl border border-cyan-300/24 bg-cyan-300/10 px-4 py-2.5 text-sm font-semibold text-cyan-100 transition-colors duration-200 hover:border-cyan-300/36 hover:bg-cyan-300/16 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={actionLocked}
+            onClick={onOpenManualDetails}
+            type="button"
+          >
+            Review manually
+          </button>
+        ) : null}
         {workflowExecutionMode === "SIMULATED" ? (
           <span className="inline-flex items-center rounded-full border border-cyan-300/24 bg-cyan-300/10 px-3 py-2 text-xs font-medium text-cyan-100">
             SIMULATION MODE — Gmail won&apos;t be changed.
@@ -1422,6 +1570,20 @@ function DiscoveryFact({ children }) {
     <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-200">
       {children}
     </div>
+  );
+}
+
+function CountInfoTip({ label, tooltip }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span>{label}</span>
+      <TooltipTag
+        className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-white/16 bg-white/8 text-[10px] font-semibold text-slate-300"
+        description={tooltip}
+      >
+        i
+      </TooltipTag>
+    </span>
   );
 }
 
@@ -1838,9 +2000,12 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   const [selectionDecision, setSelectionDecision] = useState(null);
   const [selectionWorkflow, setSelectionWorkflow] = useState(null);
   const [manualDetailsGroups, setManualDetailsGroups] = useState([]);
+  const [manualHandledIds, setManualHandledIds] = useState(() => new Set());
   const [activeResultTab, setActiveResultTab] = useState("active");
   const [sortMode, setSortMode] = useState("discovery");
   const [categoryFilters, setCategoryFilters] = useState([]);
+  const [unsubscribePathFilters, setUnsubscribePathFilters] = useState([]);
+  const [surfaceFilters, setSurfaceFilters] = useState([]);
   const autoAdvanceVersionRef = useRef(0);
 
   const senderGroups = scan?.senderGroups || [];
@@ -1848,16 +2013,39 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
     ? selectionWorkflow
     : null;
   const selectionWorkflowGroupById = new Map((activeSelectionWorkflow?.scan?.senderGroups || []).map((group) => [group.id, group]));
-  const resolvedSenderGroups = senderGroups.map((group) => selectionWorkflowGroupById.get(group.id) || group);
+  const resolvedSenderGroups = senderGroups.map((group) => {
+    const nextGroup = selectionWorkflowGroupById.get(group.id) || group;
+
+    if (!manualHandledIds.has(nextGroup.id)) {
+      return nextGroup;
+    }
+
+    return {
+      ...nextGroup,
+      workflow: {
+        ...(nextGroup.workflow || {}),
+        manualHandledLocally: true,
+      },
+    };
+  });
   const activeSenderGroups = resolvedSenderGroups.filter((group) => !isGroupDone(group));
   const doneSenderGroups = resolvedSenderGroups.filter((group) => isGroupDone(group));
   const activeGroupById = new Map(activeSenderGroups.map((group) => [group.id, group]));
   const pauseSettling = scan?.state === SCAN_STATES.PAUSED && hasPendingPauseWork(scan);
   const pausing = requestState === "pause" || pauseSettling;
   const activeScan = Boolean(scan && ACTIVE_SCAN_STATES.has(scan.state));
-  const filteredGroups = categoryFilters.length === 0
-    ? activeSenderGroups
-    : activeSenderGroups.filter((group) => categoryFilters.includes(group.category || SENDER_CATEGORIES.UNKNOWN));
+  const filteredGroups = activeSenderGroups.filter((group) => {
+    const categoryMatch = categoryFilters.length === 0
+      || categoryFilters.includes(group.category || SENDER_CATEGORIES.UNKNOWN);
+    const unsubscribeAvailability = getGroupUnsubscribeAvailability(group);
+    const pathMatch = unsubscribePathFilters.length === 0
+      || (unsubscribePathFilters.includes("automatic") && unsubscribeAvailability.executable)
+      || (unsubscribePathFilters.includes("manual") && hasManualUnsubscribePath(group));
+    const surfaceMatch = surfaceFilters.length === 0
+      || surfaceFilters.includes(getGroupSurfaceId(group));
+
+    return categoryMatch && pathMatch && surfaceMatch;
+  });
   const visibleGroups = sortGroupsForDisplay(filteredGroups, sortMode);
   const visibleActionableGroupIds = visibleGroups
     .filter((group) => isGroupActionable(group))
@@ -1909,10 +2097,26 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
     senderGroups.length > 0 ? `${formatQuantity(senderGroups.length, "sender group")} found` : null,
     reviewableGroupCount > 0 ? `${formatQuantity(reviewableGroupCount, "group")} worth a look` : null,
   ].filter(Boolean);
-  const selectedCategorySummary = categoryFilters.length === 0
-    ? "All categories"
-    : `${categoryFilters.length} selected`;
-  const sortDescription = getSortDescription(sortMode);
+  const automaticUnsubscribeCount = activeSenderGroups.filter((group) => hasAutomaticUnsubscribeAction(group)).length;
+  const manualUnsubscribeCount = activeSenderGroups.filter((group) => hasManualUnsubscribePath(group)).length;
+  const selectedFilterSummary = buildFilterSummary({
+    categoryFilters,
+    surfaceFilters,
+    unsubscribePathFilters,
+  });
+  const filterContextDescription = getFilterContextDescription({
+    categoryFilters,
+    surfaceFilters,
+    unsubscribePathFilters,
+  });
+  const previouslyHandledWizardIds = new Set(
+    manualDetailsGroups
+      .filter((group) => isPreviouslyManualHandled({
+        identity: getManualSenderIdentity(group),
+        scanId: scan?.scanId,
+      }))
+      .map((group) => group.id),
+  );
   const discoveryTitle = scan?.state === SCAN_STATES.COMPLETE
     ? "Sender groups are ready for review."
     : pausing || scan?.state === SCAN_STATES.PAUSED || scan?.state === SCAN_STATES.RESOURCE_LIMIT_REACHED
@@ -1932,7 +2136,17 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   );
 
   useEffect(() => {
-    if (!scan?.scanId || selectedCount === 0) {
+    const reviewReady = Boolean(scan?.scanId)
+      && senderGroups.length > 0
+      && (
+        selectedCount > 0
+        || scan.state === SCAN_STATES.COMPLETE
+        || scan.state === SCAN_STATES.PAUSED
+        || scan.state === SCAN_STATES.RESOURCE_LIMIT_REACHED
+        || scan.state === SCAN_STATES.PARTIAL_RESULTS_AVAILABLE
+      );
+
+    if (!reviewReady) {
       return undefined;
     }
 
@@ -1961,7 +2175,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
       cancelled = true;
       window.clearTimeout(timeoutId);
     };
-  }, [scan?.scanId, scan?.updatedAt, selectedCount]);
+  }, [scan?.scanId, scan?.state, scan?.updatedAt, selectedCount, senderGroups.length]);
 
   useEffect(() => {
     if (!scan?.scanId || !hasSelectedRunningExecution) {
@@ -2075,9 +2289,64 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
     ));
   }
 
+  function toggleUnsubscribePathFilter(path) {
+    setUnsubscribePathFilters((current) => (
+      current.includes(path)
+        ? current.filter((value) => value !== path)
+        : [...current, path]
+    ));
+  }
+
+  function toggleSurfaceFilter(surface) {
+    setSurfaceFilters((current) => (
+      current.includes(surface)
+        ? current.filter((value) => value !== surface)
+        : [...current, surface]
+    ));
+  }
+
   function clearFilters() {
     setCategoryFilters([]);
+    setUnsubscribePathFilters([]);
+    setSurfaceFilters([]);
     setSortMode("discovery");
+  }
+
+  async function openManualWizard(groups) {
+    const requestedIds = (groups || [])
+      .filter((group) => hasManualOnlyUnsubscribeAction(group))
+      .map((group) => group.id);
+
+    if (requestedIds.length === 0) {
+      return;
+    }
+
+    let sourceGroups = resolvedSenderGroups;
+
+    try {
+      const payload = await readJson("/api/workflow/status");
+
+      if (payload.workflow) {
+        setSelectionWorkflow(payload.workflow);
+      }
+
+      if (payload.workflow?.scan) {
+        setScan(payload.workflow.scan);
+        sourceGroups = payload.workflow.scan.senderGroups || [];
+      }
+    } catch (error) {
+      setErrorMessage(error.message || "The latest workflow status could not be loaded.");
+    }
+
+    const sequence = requestedIds
+      .map((id) => sourceGroups.find((group) => group.id === id))
+      .filter((group) => group && hasManualOnlyUnsubscribeAction(group));
+
+    if (sequence.length === 0) {
+      return;
+    }
+
+    setManualDetailsGroups(sequence);
   }
 
   function clearSelection() {
@@ -2131,6 +2400,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
       setScan(payload.scan);
       if (actionType === "start") {
         setManualDetailsGroups([]);
+        setManualHandledIds(new Set());
         setSelectedIds([]);
         setSelectionDecision(null);
         setSelectionWorkflow(null);
@@ -2236,9 +2506,21 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   return (
     <div className="grid gap-6">
       {showManualDetailsModal ? (
-        <ManualUnsubscribeDetailsModal
+        <ManualUnsubscribeWizard
           groups={manualDetailsGroups}
           onClose={() => setManualDetailsGroups([])}
+          onMarkHandled={(group) => {
+            if (!group?.id) {
+              return;
+            }
+
+            rememberManualHandled({
+              identity: getManualSenderIdentity(group),
+              scanId: scan?.scanId,
+            });
+            setManualHandledIds((current) => new Set(current).add(group.id));
+          }}
+          previouslyHandledIds={previouslyHandledWizardIds}
           reducedMotion={reducedMotion}
         />
       ) : null}
@@ -2254,9 +2536,25 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
 
             <RitualStageRail reducedMotion={reducedMotion} scan={scan} settled={pausing} />
 
-            {discoveryFacts.length > 0 ? (
+            {discoveryFacts.length > 0 || automaticUnsubscribeCount > 0 || manualUnsubscribeCount > 0 ? (
               <div className="flex flex-wrap gap-2">
                 {discoveryFacts.map((fact) => <DiscoveryFact key={fact}>{fact}</DiscoveryFact>)}
+                {automaticUnsubscribeCount > 0 ? (
+                  <DiscoveryFact>
+                    <CountInfoTip
+                      label={`${formatQuantity(automaticUnsubscribeCount, "automatic unsubscribe")}`}
+                      tooltip="Pidgeot can submit this unsubscribe request for you."
+                    />
+                  </DiscoveryFact>
+                ) : null}
+                {manualUnsubscribeCount > 0 ? (
+                  <DiscoveryFact>
+                    <CountInfoTip
+                      label={`${formatQuantity(manualUnsubscribeCount, "manual unsubscribe")}`}
+                      tooltip="Pidgeot found an unsubscribe option, but you need to open it yourself."
+                    />
+                  </DiscoveryFact>
+                ) : null}
               </div>
             ) : null}
 
@@ -2399,7 +2697,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
               hasRunningExecution={hasSelectedRunningExecution}
               onDecisionChange={setSelectionDecision}
               onExecute={handleSelectionExecution}
-              onOpenManualDetails={() => setManualDetailsGroups(selectedManualGroups)}
+              onOpenManualDetails={() => openManualWizard(selectedManualGroups)}
               reducedMotion={reducedMotion}
               selectedCount={selectedCount}
               workflowExecutionMode={workflowExecutionMode}
@@ -2408,13 +2706,13 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
         </AnimatePresence>
 
         {visibleResultTab === "active" ? (
-          <div className="mt-5 flex flex-col gap-4 rounded-[24px] border border-white/10 bg-[rgba(8,14,25,0.72)] p-4 lg:flex-row lg:items-end lg:justify-between">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-4">
-              <label className="grid min-w-[240px] gap-2">
+          <div className="mt-5 rounded-[24px] border border-white/10 bg-[rgba(8,14,25,0.72)] p-4">
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="grid w-[200px] max-w-full gap-2">
                 <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">Sort by</span>
-                <span className="relative flex min-w-[240px] items-center">
+                <span className="relative">
                   <select
-                    className="min-h-[50px] w-full appearance-none rounded-2xl border border-white/12 bg-[rgba(7,11,19,0.92)] px-4 py-3 pr-10 text-sm text-white outline-none transition-colors duration-200 hover:border-white/24 focus:border-cyan-300/40"
+                    className="h-12 w-full appearance-none rounded-2xl border border-white/12 bg-[rgba(7,11,19,0.92)] px-4 pr-10 text-sm text-white outline-none transition-colors duration-200 hover:border-white/24 focus:border-cyan-300/40"
                     onChange={(event) => handleSortChange(event.target.value)}
                     value={sortMode}
                   >
@@ -2426,57 +2724,42 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
                 </span>
               </label>
 
-              <details className="group relative min-w-[240px]">
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-2xl border border-white/12 bg-[rgba(7,11,19,0.92)] px-4 py-3 text-sm text-white transition-colors duration-200 hover:border-white/24">
-                  <span>
-                    <span className="mr-2 font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">Filter by category</span>
-                    <span>{selectedCategorySummary}</span>
-                  </span>
-                  <span className="text-slate-500 transition-transform duration-150 group-open:rotate-180">▾</span>
-                </summary>
-                <div className="absolute left-0 top-[calc(100%+0.75rem)] z-20 w-[280px] rounded-[24px] border border-white/12 bg-[rgba(7,11,19,0.98)] p-3 shadow-[0_18px_40px_rgba(0,0,0,0.32)]">
-                  <div className="grid gap-2">
-                    {CATEGORY_FILTER_OPTIONS.map((category) => {
-                      const checked = categoryFilters.includes(category);
+              <div className="w-[200px] max-w-full">
+                <FilterMenu
+                  categoryFilters={categoryFilters}
+                  onClearFilters={clearFilters}
+                  onToggleCategory={toggleCategoryFilter}
+                  onToggleSurface={toggleSurfaceFilter}
+                  onToggleUnsubscribePath={toggleUnsubscribePathFilter}
+                  selectedFilterSummary={selectedFilterSummary}
+                  surfaceFilters={surfaceFilters}
+                  unsubscribePathFilters={unsubscribePathFilters}
+                />
+              </div>
 
-                      return (
-                        <label key={category} className="flex cursor-pointer items-center justify-between rounded-2xl border border-white/8 bg-white/4 px-3 py-2.5 text-sm text-slate-200 transition-colors duration-150 hover:bg-white/8">
-                          <span>{formatLabel(category)}</span>
-                          <input
-                            checked={checked}
-                            className="h-4 w-4 accent-cyan-300"
-                            onChange={() => toggleCategoryFilter(category)}
-                            type="checkbox"
-                          />
-                        </label>
-                      );
-                    })}
-                  </div>
-                  <button
-                    className="mt-3 w-full rounded-2xl border border-white/12 px-3 py-2 text-sm font-semibold text-white transition-colors duration-200 hover:border-white/24 hover:bg-white/8"
-                    onClick={clearFilters}
-                    type="button"
-                  >
-                    Clear filters
-                  </button>
-                </div>
-              </details>
-
-              <BulkSelectionControls
-                allVisibleSelected={allVisibleActionableSelected}
-                disabled={hasSelectedRunningExecution}
-                onClearAll={clearSelection}
-                onSelectAll={selectAllVisibleActionable}
-                selectedCount={selectedCount}
-                visibleSelectableCount={visibleActionableGroupIds.length}
-              />
+              <div className="grid gap-2">
+                <span className="invisible font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">Select</span>
+                <BulkSelectionControls
+                  allVisibleSelected={allVisibleActionableSelected}
+                  disabled={hasSelectedRunningExecution}
+                  onClearAll={clearSelection}
+                  onSelectAll={selectAllVisibleActionable}
+                  selectedCount={selectedCount}
+                  visibleSelectableCount={visibleActionableGroupIds.length}
+                />
+              </div>
             </div>
 
-            <div className="grid gap-1 text-right">
-              <p className="text-sm text-slate-400">
-                Showing <span className="font-semibold text-white">{visibleGroups.length}</span> of <span className="font-semibold text-white">{activeSenderGroups.length}</span> active groups.
-              </p>
-              <p className="text-xs text-slate-500">{sortDescription}</p>
+            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-400">
+              {selectedCount > 0 ? (
+                <span>
+                  <span className="font-semibold text-white">{formatQuantity(selectedCount, "sender group")}</span> selected
+                </span>
+              ) : null}
+              <span>
+                Showing <span className="font-semibold text-white">{visibleGroups.length}</span> of <span className="font-semibold text-white">{activeSenderGroups.length}</span> active groups
+              </span>
+              <span className="text-xs text-slate-500">{filterContextDescription}</span>
             </div>
           </div>
         ) : (
@@ -2524,7 +2807,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
                       armedActionType={selectedGroupIdSet.has(group.id) ? activeSelectionDecision : null}
                       group={group}
                       mode={visibleResultTab === "done" ? "done" : "active"}
-                      onOpenManualDetails={(nextGroup) => setManualDetailsGroups([nextGroup])}
+                      onOpenManualDetails={(nextGroup) => openManualWizard([nextGroup])}
                       onToggle={() => toggleSelection(group.id)}
                       reducedMotion={reducedMotion}
                       selected={selectedGroupIdSet.has(group.id)}
