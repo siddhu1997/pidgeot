@@ -1,5 +1,5 @@
 import { GMAIL_SESSION_STATES } from "@/lib/auth/constants";
-import { SCAN_STATES } from "@/lib/scanning/constants";
+import { SCAN_PAUSE_REASONS, SCAN_STATES } from "@/lib/scanning/constants";
 
 export const ACTIVE_SCAN_STATES = new Set([
   SCAN_STATES.DISCOVERING,
@@ -82,11 +82,11 @@ export function derivePresentation(scan, gmailAuthState) {
     if (gmailAuthState === GMAIL_SESSION_STATES.REAUTH_REQUIRED) {
       return {
         accent: "cyan",
-        actionLabel: "Reconnect Gmail access",
+        actionLabel: "Reconnect Gmail",
         actionType: "gmail-upgrade",
-        body: "Gmail access needs to be restored before Pidgeot can continue the scan you started.",
+        body: "Gmail needs to be reconnected.",
         eyebrow: "Reconnect Gmail",
-        title: "Reconnect Gmail to keep going.",
+        title: "Reconnect Gmail.",
         tone: "warning",
         visualMode: "paused",
       };
@@ -147,15 +147,28 @@ export function derivePresentation(scan, gmailAuthState) {
         visualMode: "scanning",
       };
     case SCAN_STATES.PAUSED:
+      if (scan.pauseReason === SCAN_PAUSE_REASONS.LEASE_EXPIRED) {
+        return {
+          accent: "yellow",
+          actionLabel: "Continue",
+          actionType: "resume",
+          body: "Your processing window expired. Continue to pick up where you left off.",
+          eyebrow: "Processing paused",
+          title: "Processing paused.",
+          tone: "paused",
+          visualMode: "paused",
+        };
+      }
+
       return {
         accent: "slate",
-        actionLabel: "Resume scan",
+        actionLabel: "Resume",
         actionType: "resume",
-        body: scan.pauseReason === "USER_REQUESTED"
-          ? "Nothing new is being fetched. Everything Pidgeot has already found stays visible."
+        body: scan.pauseReason === SCAN_PAUSE_REASONS.USER_REQUESTED
+          ? "Pidgeot finished what was already in motion."
           : "Nothing new is being fetched until Pidgeot can continue from the existing checkpoint.",
-        eyebrow: "Paused",
-        title: "Paused.",
+        eyebrow: "Processing paused",
+        title: "Processing paused.",
         tone: "paused",
         visualMode: "paused",
       };
@@ -201,11 +214,11 @@ export function derivePresentation(scan, gmailAuthState) {
     case SCAN_STATES.REAUTH_REQUIRED:
       return {
         accent: "yellow",
-        actionLabel: "Reconnect Gmail access",
+        actionLabel: "Reconnect Gmail",
         actionType: "gmail-upgrade",
-        body: scan.failure?.message || "Gmail access needs to be restored before Pidgeot can continue the scan.",
+        body: scan.failure?.message || "Gmail needs to be reconnected.",
         eyebrow: "Reconnect Gmail",
-        title: "Scanning stopped because Gmail needs to be reconnected.",
+        title: "Reconnect Gmail.",
         tone: "warning",
         visualMode: "stopped",
       };

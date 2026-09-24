@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getRequiredCurrentAuthSession } from "@/lib/auth/current-session";
+import { getDevelopmentScenarioWorkflow } from "@/lib/dev-lab/workflow-scenario-guard";
 import { createScanService } from "@/lib/scanning/scanner";
 
 export const runtime = "nodejs";
@@ -8,6 +9,14 @@ export const runtime = "nodejs";
 export async function POST() {
   try {
     const session = await getRequiredCurrentAuthSession();
+    const scenarioWorkflow = getDevelopmentScenarioWorkflow(session);
+
+    if (scenarioWorkflow) {
+      return NextResponse.json({
+        scan: scenarioWorkflow.scan,
+      });
+    }
+
     const scan = await createScanService().resumeScan({ session });
 
     return NextResponse.json({

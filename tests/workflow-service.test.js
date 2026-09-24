@@ -127,7 +127,7 @@ function createWorkflowHarness({
   });
   const unsubscribeExecutionService = createUnsubscribeExecutionService({
     config: {
-      automaticUnsubscribeMonthlyLimit: 5000,
+      automaticUnsubscribeLeaseLimit: 5000,
       unsubscribeExecutionConcurrency: 1,
       unsubscribeMaxRedirects: 2,
       unsubscribeMaxResponseBytes: 16 * 1024,
@@ -419,7 +419,7 @@ describe("workflow service", () => {
     ]);
     expect(workflow.usage).toEqual({
       automaticUnsubscribe: expect.objectContaining({
-        monthlyLimit: 5000,
+        limit: 5000,
         remainingCount: 5000,
         successfulCount: 0,
         state: "AVAILABLE",

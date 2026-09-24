@@ -12,6 +12,7 @@ import { createPkceCodeChallenge, createPkceCodeVerifier } from "@/lib/auth/cryp
 import { createGoogleAuthUrl } from "@/lib/auth/google";
 import { oauthStateStore } from "@/lib/auth/oauth-state-store";
 import { getServerAppConfig, isAuthConfigured } from "@/lib/config";
+import { readActiveDevelopmentWorkflowScenario } from "@/lib/dev-lab/workflow-scenario-guard";
 
 export const runtime = "nodejs";
 
@@ -33,6 +34,11 @@ async function startGmailGoogleAuth(request) {
   const existingSession = existingSessionId
     ? getActiveSessionStore(config).getSession(existingSessionId)
     : null;
+
+  if (!config.isProduction && existingSession && readActiveDevelopmentWorkflowScenario(existingSession)) {
+    return NextResponse.redirect(new URL("/", request.url));
+  }
+
   const codeVerifier = createPkceCodeVerifier();
   const codeChallenge = createPkceCodeChallenge(codeVerifier);
   const stateRecord = oauthStateStore.createState({

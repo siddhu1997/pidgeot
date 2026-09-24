@@ -7,8 +7,10 @@ import { createPortal } from "react-dom";
 import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from "motion/react";
 
 import { SENDER_CATEGORIES } from "@/lib/classification/constants";
-import { SCAN_STATES } from "@/lib/scanning/constants";
+import { SCAN_PAUSE_REASONS, SCAN_STATES } from "@/lib/scanning/constants";
+import { UNSUBSCRIBE_EXECUTION_RESULT_STATUSES } from "@/lib/unsubscribe/constants";
 import {
+  WORKFLOW_BLOCKING_REASONS,
   WORKFLOW_EXECUTION_PROGRESS_PHASES,
   WORKFLOW_EXECUTION_STATES,
 } from "@/lib/workflow/constants";
@@ -117,40 +119,234 @@ function hasGroupRunningExecution(group) {
     || isExecutionRunning(group?.workflow?.cleanupExecution);
 }
 
+function getExecutionResultStatuses(execution) {
+  return Array.isArray(execution?.execution?.operationResults)
+    ? execution.execution.operationResults.map((result) => result?.status).filter(Boolean)
+    : [];
+}
+
+function getExecutionOutcome(execution) {
+  if (!hasExecutionStarted(execution)) {
+    return null;
+  }
+
+  if (execution.state === WORKFLOW_EXECUTION_STATES.RUNNING) {
+    return execution.phase === WORKFLOW_EXECUTION_PROGRESS_PHASES.QUEUED ? "queued" : "running";
+  }
+
+  if (execution.blockingReason === WORKFLOW_BLOCKING_REASONS.USAGE_LIMIT_REACHED) {
+    return "usage_limit";
+  }
+
+  if (execution.blockingReason === WORKFLOW_BLOCKING_REASONS.LEASE_EXPIRED) {
+    return "lease_expired";
+  }
+
+  if (
+    execution.state === WORKFLOW_EXECUTION_STATES.PAUSED
+    || execution.blockingReason === WORKFLOW_BLOCKING_REASONS.PAUSED
+  ) {
+    return "paused";
+  }
+
+  if (execution.state === WORKFLOW_EXECUTION_STATES.REAUTH_REQUIRED) {
+    return "reauth";
+  }
+
+  if (execution.state === WORKFLOW_EXECUTION_STATES.COMPLETED) {
+    return "completed";
+  }
+
+  if (execution.state === WORKFLOW_EXECUTION_STATES.PARTIAL_SUCCESS) {
+    return "partial";
+  }
+
+  if (execution.state === WORKFLOW_EXECUTION_STATES.MANUAL_ACTION_REQUIRED) {
+    return "manual";
+  }
+
+  if (execution.state === WORKFLOW_EXECUTION_STATES.FAILED) {
+    const statuses = getExecutionResultStatuses(execution);
+
+    if (
+      statuses.includes(UNSUBSCRIBE_EXECUTION_RESULT_STATUSES.UNSAFE_TARGET)
+      && !statuses.includes(UNSUBSCRIBE_EXECUTION_RESULT_STATUSES.FAILED_RETRYABLE)
+    ) {
+      return "unsafe";
+    }
+
+    if (
+      statuses.includes(UNSUBSCRIBE_EXECUTION_RESULT_STATUSES.FAILED_PERMANENT)
+      && !statuses.includes(UNSUBSCRIBE_EXECUTION_RESULT_STATUSES.FAILED_RETRYABLE)
+    ) {
+      return "failed_permanent";
+    }
+
+    return "failed";
+  }
+
+  return null;
+}
+
+const MANUAL_INSTRUCTION_RECOVERY = {
+  actionLabel: "View instructions",
+  actionType: "manual",
+  body: "Pidgeot found the unsubscribe path. We'll walk you through it.",
+  kind: "manual",
+  retryActionType: null,
+  title: "Manual unsubscribe needed",
+};
+
+function getWorkflowRecovery({ actionType = "unsubscribe", execution, scan } = {}) {
+  const outcome = getExecutionOutcome(execution);
+
+  if (outcome === "reauth") {
+    return {
+      actionLabel: "Reconnect Gmail",
+      actionType: "gmail-upgrade",
+      body: "Gmail needs to be reconnected.",
+      kind: "reauth",
+      retryActionType: null,
+      title: "Reconnect Gmail",
+    };
+  }
+
+  if (outcome === "lease_expired" || (!outcome && scan?.pauseReason === SCAN_PAUSE_REASONS.LEASE_EXPIRED)) {
+    return {
+      actionLabel: "Continue",
+      actionType: "resume",
+      body: "Your processing window expired. Continue to pick up where you left off.",
+      kind: "lease_expired",
+      retryActionType: null,
+      title: "Processing paused",
+    };
+  }
+
+  if (outcome === "paused") {
+    return {
+      actionLabel: "Resume",
+      actionType: "resume",
+      body: "Pidgeot finished what was already in motion.",
+      kind: "paused",
+      retryActionType: null,
+      title: "Processing paused",
+    };
+  }
+
+  if (outcome === "failed") {
+    return {
+      actionLabel: "Try again",
+      actionType: "retry",
+      body: actionType === "cleanup"
+        ? "Unread mail could not be moved to Trash. You can try again."
+        : "The unsubscribe request did not complete. You can try again.",
+      kind: "failed",
+      retryActionType: actionType,
+      title: "Needs attention",
+    };
+  }
+
+  if (outcome === "failed_permanent") {
+    return {
+      actionLabel: null,
+      actionType: null,
+      body: "This request did not complete and may not succeed if tried again.",
+      kind: "failed_permanent",
+      retryActionType: null,
+      title: "Needs attention",
+    };
+  }
+
+  if (outcome === "usage_limit") {
+    return {
+      actionLabel: null,
+      actionType: null,
+      body: "Try again when your processing window renews.",
+      kind: "usage_limit",
+      retryActionType: null,
+      title: "Pidgeot has reached its automatic unsubscribe limit.",
+    };
+  }
+
+  if (outcome === "unsafe") {
+    return {
+      actionLabel: null,
+      actionType: null,
+      body: "Pidgeot will not send this unsubscribe request automatically.",
+      kind: "unsafe",
+      retryActionType: null,
+      title: "This path is not available",
+    };
+  }
+
+  if (outcome === "manual") {
+    return MANUAL_INSTRUCTION_RECOVERY;
+  }
+
+  return null;
+}
+
+function hasSuccessfulExecutionWork(execution) {
+  const summary = execution?.execution?.summary || null;
+
+  return (summary?.successfulCount || 0) > 0
+    || (summary?.alreadyCompletedCount || 0) > 0
+    || (summary?.completedCount || 0) > 0;
+}
+
+function isAttentionOutcome(outcome) {
+  return outcome === "failed"
+    || outcome === "failed_permanent"
+    || outcome === "partial"
+    || outcome === "reauth"
+    || outcome === "usage_limit"
+    || outcome === "manual"
+    || outcome === "unsafe";
+}
+
 function getCleanupExecutionDescription(execution) {
   const summary = execution?.execution?.summary || null;
   const successfulCount = summary?.successfulCount || 0;
   const remainingEligibleCount = summary?.remainingEligibleCount || 0;
   const totalEligibleCount = summary?.totalEligibleCount || (successfulCount + remainingEligibleCount);
+  const outcome = getExecutionOutcome(execution);
 
-  if (execution?.state === WORKFLOW_EXECUTION_STATES.RUNNING) {
-    if (execution.phase === WORKFLOW_EXECUTION_PROGRESS_PHASES.QUEUED) {
-      return execution.queueSize > 1
-        ? `Queued ${execution.queuePosition} of ${execution.queueSize}`
-        : "Queued to move unread mail to Trash";
-    }
+  if (outcome === "queued") {
+    return execution.queueSize > 1
+      ? `Queued ${execution.queuePosition} of ${execution.queueSize}`
+      : "Queued to move unread mail to Trash";
+  }
 
+  if (outcome === "running") {
     return "Moving unread messages to Trash.";
   }
 
-  if (execution?.state === WORKFLOW_EXECUTION_STATES.COMPLETED) {
-    if (successfulCount <= 0) {
+  if (outcome === "completed") {
+    if (successfulCount <= 0 && !hasSuccessfulExecutionWork(execution)) {
       return "No unread messages remained for cleanup.";
     }
 
     return "Moved to Trash";
   }
 
-  if (execution?.state === WORKFLOW_EXECUTION_STATES.PARTIAL_SUCCESS) {
+  if (outcome === "partial") {
     return `${successfulCount} of ${totalEligibleCount} moved to Trash`;
   }
 
-  if (execution?.state === WORKFLOW_EXECUTION_STATES.PAUSED) {
-    return "Paused before unread mail could be moved to Trash.";
+  if (outcome === "paused") {
+    return "Paused. Pidgeot finished what was already in motion.";
   }
 
-  if (execution?.state === WORKFLOW_EXECUTION_STATES.FAILED) {
-    return "Couldn't move to Trash";
+  if (outcome === "lease_expired") {
+    return "Your processing window expired. Continue to pick up where you left off.";
+  }
+
+  if (outcome === "reauth") {
+    return "Gmail needs to be reconnected.";
+  }
+
+  if (outcome === "failed") {
+    return "Couldn't move to Trash. You can try again.";
   }
 
   return null;
@@ -159,25 +355,28 @@ function getCleanupExecutionDescription(execution) {
 function getUnsubscribeExecutionDescription(group, execution) {
   const summary = execution?.execution?.summary || null;
   const successfulCount = summary?.successfulCount || 0;
+  const alreadyCompletedCount = summary?.alreadyCompletedCount || 0;
+  const completedSuccessCount = successfulCount + alreadyCompletedCount;
   const manualCount = summary?.manualCount || 0;
+  const outcome = getExecutionOutcome(execution);
 
-  if (execution?.state === WORKFLOW_EXECUTION_STATES.RUNNING) {
-    if (execution.phase === WORKFLOW_EXECUTION_PROGRESS_PHASES.QUEUED) {
-      return execution.queueSize > 1
-        ? `Queued ${execution.queuePosition} of ${execution.queueSize}`
-        : "Queued to submit unsubscribe request";
-    }
+  if (outcome === "queued") {
+    return execution.queueSize > 1
+      ? `Queued ${execution.queuePosition} of ${execution.queueSize}`
+      : "Queued to submit unsubscribe request";
+  }
 
+  if (outcome === "running") {
     return "Submitting unsubscribe request.";
   }
 
-  if (execution?.state === WORKFLOW_EXECUTION_STATES.COMPLETED) {
-    return successfulCount > 0
+  if (outcome === "completed") {
+    return completedSuccessCount > 0
       ? "Unsubscribe request submitted"
       : "Nothing needed an automatic unsubscribe path.";
   }
 
-  if (execution?.state === WORKFLOW_EXECUTION_STATES.PARTIAL_SUCCESS) {
+  if (outcome === "partial") {
     if (successfulCount > 0 && manualCount > 0) {
       return `${formatQuantity(successfulCount, "unsubscribe request")} submitted · ${formatQuantity(manualCount, "path")} still manual`;
     }
@@ -185,12 +384,42 @@ function getUnsubscribeExecutionDescription(group, execution) {
     return "Some unsubscribe requests were submitted.";
   }
 
-  if (execution?.state === WORKFLOW_EXECUTION_STATES.MANUAL_ACTION_REQUIRED) {
-    return "This sender still needs a manual unsubscribe step.";
+  if (outcome === "manual") {
+    return "Pidgeot found the unsubscribe path. We'll walk you through it.";
   }
 
-  if (execution?.state === WORKFLOW_EXECUTION_STATES.PAUSED) {
-    return "Paused before the unsubscribe request could finish.";
+  if (outcome === "paused") {
+    return completedSuccessCount > 0
+      ? "Unsubscribe request submitted. Paused. Pidgeot finished what was already in motion."
+      : "Paused. Pidgeot finished what was already in motion.";
+  }
+
+  if (outcome === "lease_expired") {
+    return completedSuccessCount > 0
+      ? "Unsubscribe request submitted. Your processing window expired. Continue to pick up where you left off."
+      : "Your processing window expired. Continue to pick up where you left off.";
+  }
+
+  if (outcome === "reauth") {
+    return "Gmail needs to be reconnected.";
+  }
+
+  if (outcome === "usage_limit") {
+    return completedSuccessCount > 0
+      ? "Unsubscribe request submitted. Try again when your processing window renews."
+      : "Try again when your processing window renews.";
+  }
+
+  if (outcome === "failed") {
+    return "The unsubscribe request did not complete. You can try again.";
+  }
+
+  if (outcome === "failed_permanent") {
+    return "This request did not complete and may not succeed if tried again.";
+  }
+
+  if (outcome === "unsafe") {
+    return "Pidgeot will not send this unsubscribe request automatically.";
   }
 
   if (group?.workflow?.unsubscribeHandledLocally) {
@@ -201,19 +430,21 @@ function getUnsubscribeExecutionDescription(group, execution) {
 }
 
 function getExecutionTone(execution) {
-  if (execution?.state === WORKFLOW_EXECUTION_STATES.COMPLETED) {
+  const outcome = getExecutionOutcome(execution);
+
+  if (outcome === "completed") {
     return "border-emerald-300/22 bg-emerald-300/10 text-emerald-100";
   }
 
-  if (execution?.state === WORKFLOW_EXECUTION_STATES.PARTIAL_SUCCESS || execution?.state === WORKFLOW_EXECUTION_STATES.MANUAL_ACTION_REQUIRED) {
+  if (outcome === "partial" || outcome === "manual" || outcome === "usage_limit" || outcome === "unsafe") {
     return "border-[#f4c95d]/22 bg-[#f4c95d]/10 text-[#fbe9b2]";
   }
 
-  if (execution?.state === WORKFLOW_EXECUTION_STATES.RUNNING) {
+  if (outcome === "running" || outcome === "queued") {
     return "border-cyan-300/24 bg-cyan-300/10 text-cyan-100";
   }
 
-  if (execution?.state === WORKFLOW_EXECUTION_STATES.PAUSED) {
+  if (outcome === "paused" || outcome === "lease_expired" || outcome === "reauth") {
     return "border-slate-300/18 bg-white/6 text-slate-200";
   }
 
@@ -224,28 +455,45 @@ function getExecutionLabel(actionType, execution) {
   const prefix = actionType === "unsubscribe"
     ? "Unsubscribe"
     : "Move unread to Trash";
+  const outcome = getExecutionOutcome(execution);
 
-  if (execution?.state === WORKFLOW_EXECUTION_STATES.RUNNING) {
+  if (outcome === "running" || outcome === "queued") {
     return `${prefix} · ${EXECUTION_RUNNING_PHASE_COPY[execution.phase] || "Running"}`;
   }
 
-  if (execution?.state === WORKFLOW_EXECUTION_STATES.COMPLETED) {
+  if (outcome === "completed") {
     return `${prefix} · Completed`;
   }
 
-  if (execution?.state === WORKFLOW_EXECUTION_STATES.PARTIAL_SUCCESS) {
+  if (outcome === "partial") {
     return `${prefix} · Partial success`;
   }
 
-  if (execution?.state === WORKFLOW_EXECUTION_STATES.MANUAL_ACTION_REQUIRED) {
+  if (outcome === "manual") {
     return `${prefix} · Manual required`;
   }
 
-  if (execution?.state === WORKFLOW_EXECUTION_STATES.PAUSED) {
+  if (outcome === "paused") {
     return `${prefix} · Paused`;
   }
 
-  return `${prefix} · Failed`;
+  if (outcome === "lease_expired") {
+    return `${prefix} · Processing paused`;
+  }
+
+  if (outcome === "reauth") {
+    return `${prefix} · Reconnect Gmail`;
+  }
+
+  if (outcome === "failed_permanent" || outcome === "unsafe") {
+    return `${prefix} · Needs attention`;
+  }
+
+  if (outcome === "usage_limit") {
+    return `${prefix} · Limit reached`;
+  }
+
+  return `${prefix} · Needs attention`;
 }
 
 function hasCompletedCleanupAction(group) {
@@ -366,18 +614,23 @@ function buildExecutionSummary({ actionType, groups }) {
   const counts = {
     completed: 0,
     failed: 0,
+    leaseExpired: 0,
     manual: 0,
     partial: 0,
     paused: 0,
     processing: 0,
     queued: 0,
+    reauth: 0,
     running: 0,
+    usage: 0,
   };
 
   executions.forEach(({ execution }) => {
-    if (execution.state === WORKFLOW_EXECUTION_STATES.RUNNING) {
+    const outcome = getExecutionOutcome(execution);
+
+    if (outcome === "running" || outcome === "queued") {
       counts.running += 1;
-      if (execution.phase === WORKFLOW_EXECUTION_PROGRESS_PHASES.QUEUED) {
+      if (outcome === "queued") {
         counts.queued += 1;
       } else {
         counts.processing += 1;
@@ -385,31 +638,60 @@ function buildExecutionSummary({ actionType, groups }) {
       return;
     }
 
-    if (execution.state === WORKFLOW_EXECUTION_STATES.COMPLETED) {
+    if (outcome === "completed") {
       counts.completed += 1;
       return;
     }
 
-    if (execution.state === WORKFLOW_EXECUTION_STATES.PARTIAL_SUCCESS) {
+    if (outcome === "partial") {
       counts.partial += 1;
       return;
     }
 
-    if (execution.state === WORKFLOW_EXECUTION_STATES.MANUAL_ACTION_REQUIRED) {
+    if (outcome === "manual") {
       counts.manual += 1;
       return;
     }
 
-    if (execution.state === WORKFLOW_EXECUTION_STATES.PAUSED) {
+    if (outcome === "paused") {
       counts.paused += 1;
       return;
     }
 
-    if (execution.state === WORKFLOW_EXECUTION_STATES.FAILED) {
+    if (outcome === "lease_expired") {
+      counts.leaseExpired += 1;
+      return;
+    }
+
+    if (outcome === "reauth") {
+      counts.reauth += 1;
+      return;
+    }
+
+    if (outcome === "usage_limit") {
+      counts.usage += 1;
+      return;
+    }
+
+    if (outcome === "failed") {
       counts.failed += 1;
     }
   });
 
+  const processedCount = counts.completed
+    + counts.partial
+    + counts.manual
+    + counts.paused
+    + counts.leaseExpired
+    + counts.reauth
+    + counts.usage
+    + counts.failed;
+  const attentionCount = counts.partial
+    + counts.manual
+    + counts.reauth
+    + counts.usage
+    + counts.failed;
+  const lines = [];
   let headline = null;
 
   if (counts.running > 0) {
@@ -424,37 +706,34 @@ function buildExecutionSummary({ actionType, groups }) {
     }
 
     headline = fragments.join(" · ");
-  } else if (counts.partial > 0 || counts.paused > 0 || counts.manual > 0 || counts.failed > 0 || counts.completed > 0) {
-    const fragments = [];
+  } else if (processedCount > 0) {
+    if (attentionCount > 0 && (counts.completed > 0 || processedCount > 1)) {
+      lines.push(`${formatQuantity(processedCount, "sender")} processed`);
 
-    if (counts.completed > 0) {
-      fragments.push(`${formatQuantity(counts.completed, "sender")} completed`);
+      if (counts.completed > 0) {
+        lines.push(`${formatQuantity(counts.completed, "sender")} completed`);
+      }
+
+      lines.push(`${formatQuantity(attentionCount, "sender")} needs attention`);
+      headline = lines.join(" · ");
+    } else if (counts.paused > 0 || counts.leaseExpired > 0) {
+      headline = counts.leaseExpired > 0 ? "Processing paused" : "Paused";
+    } else if (counts.completed > 0) {
+      headline = `${formatQuantity(counts.completed, "sender")} completed`;
+    } else if (attentionCount > 0) {
+      lines.push(`${formatQuantity(attentionCount, "sender")} needs attention`);
+      headline = lines[0];
     }
-
-    if (counts.partial > 0) {
-      fragments.push(`${formatQuantity(counts.partial, "sender")} partial`);
-    }
-
-    if (counts.manual > 0) {
-      fragments.push(`${formatQuantity(counts.manual, "sender")} manual`);
-    }
-
-    if (counts.paused > 0) {
-      fragments.push(`${formatQuantity(counts.paused, "sender")} paused`);
-    }
-
-    if (counts.failed > 0) {
-      fragments.push(`${formatQuantity(counts.failed, "sender")} failed`);
-    }
-
-    headline = fragments.join(" · ");
   }
 
   return {
+    attentionCount,
     counts,
     hasResults: executions.length > 0,
     hasRunning: counts.running > 0,
     headline,
+    lines,
+    processedCount,
     relevantCount: relevantGroups.length,
   };
 }
@@ -562,31 +841,55 @@ function getActionabilityTooltip(label, unsubscribe) {
 }
 
 function getUnsubscribeSeverVisualState({ armed, execution, group }) {
-  if (execution?.state === WORKFLOW_EXECUTION_STATES.RUNNING) {
-    return execution.phase === WORKFLOW_EXECUTION_PROGRESS_PHASES.QUEUED ? "queued" : "processing";
+  const outcome = getExecutionOutcome(execution);
+  const successful = hasSuccessfulUnsubscribeSimulation(group, execution) || hasSuccessfulExecutionWork(execution);
+
+  if (outcome === "queued") {
+    return "queued";
   }
 
-  if (execution?.state === WORKFLOW_EXECUTION_STATES.COMPLETED) {
-    return hasSuccessfulUnsubscribeSimulation(group, execution) ? "completed" : "manual";
+  if (outcome === "running") {
+    return "processing";
   }
 
-  if (execution?.state === WORKFLOW_EXECUTION_STATES.PARTIAL_SUCCESS) {
-    return hasSuccessfulUnsubscribeSimulation(group, execution) ? "partial" : "failed";
+  if (outcome === "completed") {
+    return successful ? "completed" : "manual";
   }
 
-  if (execution?.state === WORKFLOW_EXECUTION_STATES.MANUAL_ACTION_REQUIRED) {
+  if (outcome === "partial") {
+    return successful ? "partial" : "failed";
+  }
+
+  if (outcome === "manual") {
     return "manual";
   }
 
-  if (execution?.state === WORKFLOW_EXECUTION_STATES.PAUSED) {
+  if (outcome === "paused") {
     return "paused";
   }
 
-  if (
-    execution?.state === WORKFLOW_EXECUTION_STATES.FAILED
-    || execution?.state === WORKFLOW_EXECUTION_STATES.REAUTH_REQUIRED
-  ) {
+  if (outcome === "lease_expired") {
+    return "lease";
+  }
+
+  if (outcome === "reauth") {
+    return "reauth";
+  }
+
+  if (outcome === "usage_limit") {
+    return successful ? "partial" : "usage";
+  }
+
+  if (outcome === "failed" || outcome === "failed_permanent") {
     return "failed";
+  }
+
+  if (outcome === "unsafe") {
+    return "unsafe";
+  }
+
+  if (hasManualOnlyUnsubscribeAction(group)) {
+    return "manual";
   }
 
   return armed ? "armed" : null;
@@ -639,9 +942,9 @@ function getUnsubscribeSeverCopy(visualState) {
 
   if (visualState === "failed") {
     return {
-      badge: "Failed",
-      body: "The unsubscribe request did not complete.",
-      headline: "Unsubscribe request failed",
+      badge: "Needs attention",
+      body: "The unsubscribe request did not complete. You can try again.",
+      headline: "Unsubscribe needs attention",
       tone: "border-rose-300/20 bg-rose-300/10",
       toneAccent: "text-rose-100",
       toneLine: "text-rose-200",
@@ -651,19 +954,63 @@ function getUnsubscribeSeverCopy(visualState) {
   if (visualState === "paused") {
     return {
       badge: "Paused",
-      body: "Resume the scan to continue the unsubscribe request.",
-      headline: "Unsubscribe paused",
+      body: "Pidgeot finished what was already in motion.",
+      headline: "Processing paused",
       tone: "border-white/10 bg-white/5",
       toneAccent: "text-slate-100",
       toneLine: "text-slate-300",
     };
   }
 
+  if (visualState === "lease") {
+    return {
+      badge: "Paused",
+      body: "Your processing window expired. Continue to pick up where you left off.",
+      headline: "Processing paused",
+      tone: "border-[#f4c95d]/16 bg-[#f4c95d]/8",
+      toneAccent: "text-[#fbe9b2]",
+      toneLine: "text-[#f4c95d]",
+    };
+  }
+
+  if (visualState === "reauth") {
+    return {
+      badge: "Reconnect",
+      body: "Gmail needs to be reconnected.",
+      headline: "Reconnect Gmail",
+      tone: "border-[#f4c95d]/16 bg-[#f4c95d]/8",
+      toneAccent: "text-[#fbe9b2]",
+      toneLine: "text-[#f4c95d]",
+    };
+  }
+
+  if (visualState === "usage") {
+    return {
+      badge: "Limit reached",
+      body: "Try again when your processing window renews.",
+      headline: "Pidgeot has reached its automatic unsubscribe limit.",
+      tone: "border-[#f4c95d]/16 bg-[#f4c95d]/8",
+      toneAccent: "text-[#fbe9b2]",
+      toneLine: "text-[#f4c95d]",
+    };
+  }
+
+  if (visualState === "unsafe") {
+    return {
+      badge: "Unavailable",
+      body: "Pidgeot will not send this unsubscribe request automatically.",
+      headline: "This path is not available",
+      tone: "border-[#f4c95d]/16 bg-[#f4c95d]/8",
+      toneAccent: "text-[#fbe9b2]",
+      toneLine: "text-[#f4c95d]",
+    };
+  }
+
   if (visualState === "manual") {
     return {
       badge: "Manual",
-      body: "This sender still needs a manual unsubscribe step. No automatic sever path was available.",
-      headline: "Manual unsubscribe still required",
+      body: "Pidgeot found the unsubscribe path. We'll walk you through it.",
+      headline: "Manual unsubscribe needed",
       tone: "border-white/10 bg-white/5",
       toneAccent: "text-slate-100",
       toneLine: "text-slate-300",
@@ -681,17 +1028,29 @@ function getUnsubscribeSeverCopy(visualState) {
 }
 
 function shouldShowUnsubscribeSeverSurface({ armedActionType, execution, group }) {
+  if (hasManualOnlyUnsubscribeAction(group)) {
+    return true;
+  }
+
   if (armedActionType !== "unsubscribe" && !hasExecutionStarted(execution)) {
     return false;
   }
 
   const unsubscribeAvailability = getGroupUnsubscribeAvailability(group);
 
+  const outcome = getExecutionOutcome(execution);
+
   return unsubscribeAvailability.automaticCount > 0
     || hasSuccessfulUnsubscribeSimulation(group, execution)
     || isExecutionRunning(execution)
-    || execution?.state === WORKFLOW_EXECUTION_STATES.FAILED
-    || execution?.state === WORKFLOW_EXECUTION_STATES.PAUSED;
+    || outcome === "failed"
+    || outcome === "failed_permanent"
+    || outcome === "paused"
+    || outcome === "lease_expired"
+    || outcome === "reauth"
+    || outcome === "usage_limit"
+    || outcome === "unsafe"
+    || outcome === "manual";
 }
 
 function TooltipTag({ children, className, description }) {
@@ -715,7 +1074,30 @@ function TooltipTag({ children, className, description }) {
   );
 }
 
-function UnsubscribeSeverSurface({ armed, execution, group, reducedMotion }) {
+function RecoveryActionButton({ disabled, label, onClick }) {
+  return (
+    <button
+      className="rounded-full border border-white/16 bg-white/6 px-3 py-1.5 text-xs font-semibold text-white transition-colors duration-200 hover:border-white/28 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+      disabled={disabled}
+      onClick={(event) => {
+        stopNestedCardEvent(event);
+        onClick?.(event);
+      }}
+      type="button"
+    >
+      {label}
+    </button>
+  );
+}
+
+function UnsubscribeSeverSurface({
+  armed,
+  execution,
+  group,
+  onRecoveryAction,
+  recovery = null,
+  reducedMotion,
+}) {
   const visualState = getUnsubscribeSeverVisualState({ armed, execution, group });
 
   if (!visualState) {
@@ -724,7 +1106,13 @@ function UnsubscribeSeverSurface({ armed, execution, group, reducedMotion }) {
 
   const copy = getUnsubscribeSeverCopy(visualState);
   const broken = visualState === "processing" || visualState === "completed" || visualState === "partial";
-  const restoring = visualState === "failed" || visualState === "paused" || visualState === "manual";
+  const restoring = visualState === "failed"
+    || visualState === "paused"
+    || visualState === "manual"
+    || visualState === "lease"
+    || visualState === "reauth"
+    || visualState === "usage"
+    || visualState === "unsafe";
   const title = getGroupTitle(group);
 
   return (
@@ -839,8 +1227,16 @@ function UnsubscribeSeverSurface({ armed, execution, group, reducedMotion }) {
       </div>
 
       <div className="mt-3">
-        <p className={classNames("font-medium", copy.toneAccent)}>{copy.headline}</p>
-        <p className="mt-1 text-xs leading-5 text-slate-300">{copy.body}</p>
+        <p className={classNames("font-medium", copy.toneAccent)}>{recovery?.title || copy.headline}</p>
+        <p className="mt-1 text-xs leading-5 text-slate-300">{recovery?.body || copy.body}</p>
+        {recovery?.actionLabel && typeof onRecoveryAction === "function" ? (
+          <div className="mt-3">
+            <RecoveryActionButton
+              label={recovery.actionLabel}
+              onClick={() => onRecoveryAction(recovery)}
+            />
+          </div>
+        ) : null}
       </div>
     </motion.div>
   );
@@ -1101,23 +1497,6 @@ function getSelectionActionSummary(snapshot) {
 function stopNestedCardEvent(event) {
   event.preventDefault();
   event.stopPropagation();
-}
-
-function ManualUnsubscribeChip({ onClick }) {
-  return (
-    <button
-      aria-haspopup="dialog"
-      className="rounded-full border border-cyan-300/28 bg-cyan-300/14 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.14em] text-cyan-100 underline-offset-2 transition-colors duration-200 hover:border-cyan-300/48 hover:bg-cyan-300/22 hover:underline"
-      onClick={(event) => {
-        stopNestedCardEvent(event);
-        onClick();
-      }}
-      onKeyDown={stopNestedCardEvent}
-      type="button"
-    >
-      View instructions
-    </button>
-  );
 }
 
 function ManualCountButton({ count, disabled, onClick }) {
@@ -1478,29 +1857,42 @@ function FilterMenu({
   );
 }
 
-function ManualUnsubscribeInfoCard({ disabled, onOpenManualDetails }) {
+function ManualUnsubscribeInfoCard({ disabled, label, onOpenManualDetails }) {
   return (
     <div className="flex min-h-[72px] min-w-[220px] flex-1 flex-col items-start justify-center rounded-[22px] border border-white/12 bg-[rgba(7,11,19,0.88)] px-4 py-3 text-left">
       <span className="text-sm font-semibold text-white">Unsubscribe</span>
-      <span className="mt-1 text-xs leading-5 text-slate-400">Manual action required</span>
+      <span className="mt-1 text-xs leading-5 text-slate-400">Manual unsubscribe needed</span>
       <button
         className={classNames(
           "mt-2 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors duration-200",
           disabled
             ? "cursor-not-allowed border-white/8 bg-black/18 text-slate-500"
-            : "border-cyan-300/24 bg-cyan-300/10 text-cyan-100 hover:border-cyan-300/36 hover:bg-cyan-300/16",
+            : "border-white/16 bg-white/6 text-white hover:border-white/28 hover:bg-white/10",
         )}
         disabled={disabled}
         onClick={onOpenManualDetails}
         type="button"
       >
-        Review manually
+        {label}
       </button>
     </div>
   );
 }
 
-function getRecommendedSelectionAction(actionSummary) {
+function getRecommendedSelectionAction(actionSummary, recovery = null) {
+  const unsubscribeBlocked = recovery?.kind === "reauth"
+    || recovery?.kind === "lease_expired"
+    || recovery?.kind === "paused"
+    || recovery?.kind === "usage_limit"
+    || recovery?.kind === "failed"
+    || recovery?.kind === "failed_permanent"
+    || recovery?.kind === "unsafe"
+    || recovery?.kind === "manual";
+
+  if (unsubscribeBlocked) {
+    return actionSummary?.cleanup?.enabled ? "cleanup" : null;
+  }
+
   if (actionSummary?.unsubscribe?.enabled) {
     return "unsubscribe";
   }
@@ -1510,6 +1902,63 @@ function getRecommendedSelectionAction(actionSummary) {
   }
 
   return null;
+}
+
+const RECOVERY_KIND_PRIORITY = [
+  "reauth",
+  "lease_expired",
+  "paused",
+  "usage_limit",
+  "failed",
+  "failed_permanent",
+  "unsafe",
+  "manual",
+];
+
+function buildSelectionRecovery({ groups, scan }) {
+  const recoveries = groups
+    .flatMap((group) => ([
+      getWorkflowRecovery({
+        actionType: "unsubscribe",
+        execution: getWorkflowActionExecution(group, "unsubscribe"),
+        scan,
+      }),
+      getWorkflowRecovery({
+        actionType: "cleanup",
+        execution: getWorkflowActionExecution(group, "cleanup"),
+        scan,
+      }),
+    ]))
+    .filter(Boolean);
+
+  for (const kind of RECOVERY_KIND_PRIORITY) {
+    const match = recoveries.find((recovery) => recovery.kind === kind);
+
+    if (match) {
+      return match;
+    }
+  }
+
+  return null;
+}
+
+function selectionHasRetryableDecision(groups, actionType) {
+  return groups.some((group) => {
+    const recovery = getWorkflowRecovery({
+      actionType,
+      execution: getWorkflowActionExecution(group, actionType),
+    });
+
+    if (recovery?.kind !== "failed") {
+      return false;
+    }
+
+    if (actionType === "unsubscribe") {
+      return hasExecutableUnsubscribeAction(group);
+    }
+
+    return getGroupCleanupEligibleCount(group) > 0;
+  });
 }
 
 function SelectionActionButton({ active, description, disabled, emphasized = false, label, onClick, reducedMotion }) {
@@ -1564,7 +2013,10 @@ function SelectionActionBar({
   onDecisionChange,
   onExecute,
   onOpenManualDetails,
+  onRecoveryAction,
+  recovery = null,
   reducedMotion,
+  retryable = false,
   selectedCount,
 }) {
   const selectionLabel = formatQuantity(selectedCount, "sender");
@@ -1575,12 +2027,22 @@ function SelectionActionBar({
     ? actionSummary.cleanup.description
     : "No unread cleanup available.";
   const manualOnlyUnsubscribe = !actionSummary.unsubscribe.enabled && actionSummary.unsubscribe.manualGroupCount > 0;
-  const executionButtonLabel = activeDecision === "unsubscribe"
-    ? "Submit unsubscribe request"
-    : "Move unread to Trash";
+  const executionButtonLabel = retryable
+    ? (activeDecision === "unsubscribe" ? "Try unsubscribe again" : "Try moving to Trash again")
+    : activeDecision === "unsubscribe"
+      ? "Submit unsubscribe request"
+      : "Move unread to Trash";
+  const unsubscribeBlocked = recovery?.kind === "reauth"
+    || recovery?.kind === "lease_expired"
+    || recovery?.kind === "paused"
+    || recovery?.kind === "usage_limit";
   const actionLocked = executionRequestState !== "idle" || hasRunningExecution;
-  const executeDisabled = !activeDecision || actionLocked;
-  const recommendedAction = getRecommendedSelectionAction(actionSummary);
+  const executeDisabled = !activeDecision
+    || actionLocked
+    || (unsubscribeBlocked && activeDecision === "unsubscribe");
+  const recommendedAction = getRecommendedSelectionAction(actionSummary, recovery);
+  const summaryLines = executionSummary?.lines?.length > 0 ? executionSummary.lines : [];
+  const showExecute = Boolean(activeDecision) && !(unsubscribeBlocked && activeDecision === "unsubscribe" && !actionSummary.cleanup.enabled);
 
   return (
     <motion.section
@@ -1612,13 +2074,16 @@ function SelectionActionBar({
         {manualOnlyUnsubscribe ? (
           <ManualUnsubscribeInfoCard
             disabled={actionLocked}
+            label={actionSummary.unsubscribe.manualGroupCount >= 2
+              ? "Run manual unsubscribe wizard"
+              : "View instructions"}
             onOpenManualDetails={onOpenManualDetails}
           />
         ) : (
           <SelectionActionButton
             active={activeDecision === "unsubscribe"}
             description={unsubscribeButtonDescription}
-            disabled={!actionSummary.unsubscribe.enabled || actionLocked}
+            disabled={!actionSummary.unsubscribe.enabled || actionLocked || unsubscribeBlocked}
             emphasized={recommendedAction === "unsubscribe"}
             label={actionSummary.unsubscribe.label}
             onClick={() => onDecisionChange(activeDecision === "unsubscribe" ? null : "unsubscribe")}
@@ -1636,49 +2101,78 @@ function SelectionActionBar({
         />
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-3">
-        {actionSummary.unsubscribe.manualGroupCount > 0 && !manualOnlyUnsubscribe ? (
-          <button
-            className="rounded-2xl border border-cyan-300/24 bg-cyan-300/10 px-4 py-2.5 text-sm font-semibold text-cyan-100 transition-colors duration-200 hover:border-cyan-300/36 hover:bg-cyan-300/16 disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={actionLocked}
-            onClick={onOpenManualDetails}
-            type="button"
-          >
-            Review manually
-          </button>
-        ) : null}
-        {executionSummary?.headline ? (
-          <span className="inline-flex items-center rounded-full border border-white/10 bg-white/6 px-3 py-2 text-xs font-medium text-slate-200">
-            {executionSummary.headline}
-          </span>
-        ) : null}
-        {activeDecision ? (
-          <>
-            <motion.button
-              className={classNames(
-                "rounded-2xl border px-4 py-2.5 text-sm font-semibold transition-[background-color,border-color,transform] duration-200",
-                executeDisabled
-                  ? "cursor-not-allowed border border-white/10 bg-white/6 text-slate-500"
-                  : "border-[#f4c95d]/40 bg-[#f4c95d] text-slate-950 shadow-[0_12px_26px_rgba(0,0,0,0.22)] hover:border-[#f7d77d] hover:bg-[#f7d77d]",
-              )}
-              disabled={executeDisabled}
-              onClick={onExecute}
-              type="button"
-              whileTap={executeDisabled ? undefined : { scale: 0.985 }}
-            >
-              {executionRequestState === "submitting"
-                ? "Queueing..."
-                : hasRunningExecution
-                  ? "Execution in progress"
-                  : executionButtonLabel}
-            </motion.button>
-            {hasRunningExecution ? (
-              <span className="inline-flex items-center rounded-full border border-cyan-300/24 bg-cyan-300/10 px-3 py-2 text-xs font-medium text-cyan-100">
-                Queued and processing follow the live workflow state.
-              </span>
+      <div className="mt-4 grid gap-3">
+        {summaryLines.length > 0 || recovery || executionSummary?.headline ? (
+          <div className="min-w-0 rounded-2xl border border-white/10 bg-white/6 px-3 py-2 text-xs leading-5 text-slate-200">
+            {summaryLines.length > 0 ? summaryLines.map((line) => (
+              <p key={line}>{line}</p>
+            )) : executionSummary?.headline && !recovery ? (
+              <p>{executionSummary.headline}</p>
             ) : null}
-          </>
+            {recovery ? (
+              <div className={summaryLines.length > 0 ? "mt-2" : null}>
+                <p className="font-medium text-white">{recovery.title}</p>
+                <p className="mt-1 break-words">{recovery.body}</p>
+              </div>
+            ) : null}
+          </div>
         ) : null}
+
+        <div className="flex flex-wrap items-center gap-3">
+          {actionSummary.unsubscribe.manualGroupCount > 0 && !manualOnlyUnsubscribe ? (
+            <button
+              className={classNames(
+                "inline-flex min-h-11 shrink-0 items-center rounded-2xl border px-4 py-2.5 text-sm font-semibold transition-colors duration-200 disabled:cursor-not-allowed disabled:opacity-60",
+                actionSummary.unsubscribe.manualGroupCount >= 2
+                  ? "border-cyan-300/24 bg-cyan-300/10 text-cyan-100 hover:border-cyan-300/36 hover:bg-cyan-300/16"
+                  : "border-white/16 bg-white/6 text-white hover:border-white/28 hover:bg-white/10",
+              )}
+              disabled={actionLocked}
+              onClick={onOpenManualDetails}
+              type="button"
+            >
+              {actionSummary.unsubscribe.manualGroupCount >= 2
+                ? "Run manual unsubscribe wizard"
+                : "View instructions"}
+            </button>
+          ) : null}
+          {recovery?.actionLabel && recovery.actionType !== "manual" && typeof onRecoveryAction === "function" ? (
+            <button
+              className="inline-flex min-h-11 shrink-0 items-center rounded-2xl border border-white/16 bg-white/6 px-4 py-2.5 text-sm font-semibold text-white transition-colors duration-200 hover:border-white/28 hover:bg-white/10"
+              onClick={() => onRecoveryAction(recovery)}
+              type="button"
+            >
+              {recovery.actionLabel}
+            </button>
+          ) : null}
+          {showExecute ? (
+            <>
+              <motion.button
+                className={classNames(
+                  "inline-flex min-h-11 shrink-0 items-center rounded-2xl border px-4 py-2.5 text-sm font-semibold transition-[background-color,border-color,transform] duration-200",
+                  executeDisabled
+                    ? "cursor-not-allowed border border-white/10 bg-white/6 text-slate-500"
+                    : "border-[#f4c95d]/40 bg-[#f4c95d] text-slate-950 shadow-[0_12px_26px_rgba(0,0,0,0.22)] hover:border-[#f7d77d] hover:bg-[#f7d77d]",
+                )}
+                disabled={executeDisabled}
+                onClick={onExecute}
+                type="button"
+                whileTap={executeDisabled ? undefined : { scale: 0.985 }}
+              >
+                {executionRequestState === "submitting"
+                  ? "Starting..."
+                  : hasRunningExecution
+                    ? "Execution in progress"
+                    : executionButtonLabel}
+              </motion.button>
+              {hasRunningExecution ? (
+                <span className="inline-flex min-h-11 items-center rounded-full border border-cyan-300/24 bg-cyan-300/10 px-3 py-2 text-xs font-medium text-cyan-100">
+                  Following the live workflow state.
+                </span>
+              ) : null}
+            </>
+          ) : null}
+        </div>
       </div>
     </motion.section>
   );
@@ -2033,7 +2527,16 @@ function ScanRitualSurface({ mode, reducedMotion, scan, senderGroups }) {
   );
 }
 
-function SenderGroupCard({ armedActionType = null, group, mode = "active", onOpenManualDetails, reducedMotion, selected, onToggle }) {
+function SenderGroupCard({
+  armedActionType = null,
+  group,
+  mode = "active",
+  onRecoveryAction,
+  reducedMotion,
+  scan = null,
+  selected,
+  onToggle,
+}) {
   const title = getGroupTitle(group);
   const domainChips = group.senderDomains.slice(0, 3);
   const sensitiveFinancial = isSensitiveFinancialGroup(group);
@@ -2045,6 +2548,16 @@ function SenderGroupCard({ armedActionType = null, group, mode = "active", onOpe
     : getActionabilityTooltip(statusLabel, group.unsubscribe);
   const unsubscribeExecution = group?.workflow?.unsubscribeExecution || null;
   const cleanupExecution = group?.workflow?.cleanupExecution || null;
+  const unsubscribeRecovery = getWorkflowRecovery({
+    actionType: "unsubscribe",
+    execution: unsubscribeExecution,
+    scan,
+  }) || (hasManualOnlyUnsubscribeAction(group) ? MANUAL_INSTRUCTION_RECOVERY : null);
+  const cleanupRecovery = getWorkflowRecovery({
+    actionType: "cleanup",
+    execution: cleanupExecution,
+    scan,
+  });
   const showUnsubscribeSeverSurface = !done && shouldShowUnsubscribeSeverSurface({
     armedActionType,
     execution: unsubscribeExecution,
@@ -2067,7 +2580,6 @@ function SenderGroupCard({ armedActionType = null, group, mode = "active", onOpe
         }
       : null,
   ].filter(Boolean);
-  const showManualUnsubscribeChip = !done && hasManualOnlyUnsubscribeAction(group) && typeof onOpenManualDetails === "function";
   const interactive = !done && actionable;
 
   return (
@@ -2167,19 +2679,15 @@ function SenderGroupCard({ armedActionType = null, group, mode = "active", onOpe
                 {formatLabel(group.attention)} attention
               </TooltipTag>
             ) : null}
-            {showManualUnsubscribeChip ? (
-              <ManualUnsubscribeChip onClick={() => onOpenManualDetails(group)} />
-            ) : (
-              <TooltipTag
-                className={classNames(
-                  "rounded-full border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.14em]",
-                  getUnsubscribeTone(group.unsubscribe),
-                )}
-                description={ACTIONABILITY_TOOLTIPS[group.unsubscribe?.resolutionStatus] || null}
-              >
-                {getUnsubscribeLabel(group.unsubscribe)}
-              </TooltipTag>
-            )}
+            <TooltipTag
+              className={classNames(
+                "rounded-full border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.14em]",
+                getUnsubscribeTone(group.unsubscribe),
+              )}
+              description={ACTIONABILITY_TOOLTIPS[group.unsubscribe?.resolutionStatus] || null}
+            >
+              {getUnsubscribeLabel(group.unsubscribe)}
+            </TooltipTag>
           </div>
         </div>
 
@@ -2188,6 +2696,8 @@ function SenderGroupCard({ armedActionType = null, group, mode = "active", onOpe
             armed={armedActionType === "unsubscribe" && !hasExecutionStarted(unsubscribeExecution)}
             execution={unsubscribeExecution}
             group={group}
+            onRecoveryAction={onRecoveryAction ? (recovery) => onRecoveryAction(recovery, group) : undefined}
+            recovery={unsubscribeRecovery}
             reducedMotion={reducedMotion}
           />
         ) : null}
@@ -2211,6 +2721,22 @@ function SenderGroupCard({ armedActionType = null, group, mode = "active", onOpe
               >
                 <p className="font-medium">{getExecutionLabel(actionType, execution)}</p>
                 {description ? <p className="mt-1 text-xs leading-5">{description}</p> : null}
+                {(() => {
+                  const recovery = actionType === "unsubscribe" ? unsubscribeRecovery : cleanupRecovery;
+
+                  if (!recovery?.actionLabel || typeof onRecoveryAction !== "function") {
+                    return null;
+                  }
+
+                  return (
+                    <div className="mt-2">
+                      <RecoveryActionButton
+                        label={recovery.actionLabel}
+                        onClick={() => onRecoveryAction(recovery, group)}
+                      />
+                    </div>
+                  );
+                })()}
               </div>
             ))}
           </div>
@@ -2266,6 +2792,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   const [selectionDecision, setSelectionDecision] = useState(null);
   const [selectionWorkflow, setSelectionWorkflow] = useState(null);
   const [manualDetailsGroups, setManualDetailsGroups] = useState([]);
+  const [manualDetailsMode, setManualDetailsMode] = useState("instructions");
   const [manualHandledIds, setManualHandledIds] = useState(() => new Set());
   const [activeResultTab, setActiveResultTab] = useState("active");
   const [sortMode, setSortMode] = useState("discovery");
@@ -2332,7 +2859,14 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   const showManualDetailsModal = manualDetailsGroups.length > 0;
   const selectionSnapshot = buildSelectionSnapshot(selectedGroups);
   const selectionActionSummary = getSelectionActionSummary(selectionSnapshot);
-  const activeSelectionDecision = selectionDecision === "unsubscribe" && !selectionActionSummary?.unsubscribe.enabled
+  const selectionRecovery = buildSelectionRecovery({
+    groups: selectedGroups,
+    scan,
+  });
+  const unsubscribeDecisionBlocked = selectionRecovery?.kind === "usage_limit";
+  const activeSelectionDecision = selectionDecision === "unsubscribe" && (
+    !selectionActionSummary?.unsubscribe.enabled || unsubscribeDecisionBlocked
+  )
     ? (selectionActionSummary?.cleanup.enabled ? "cleanup" : null)
     : selectionDecision === "cleanup" && !selectionActionSummary?.cleanup.enabled
       ? null
@@ -2343,6 +2877,9 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
         groups: selectedGroups,
       })
     : null;
+  const selectionRetryable = Boolean(
+    activeSelectionDecision && selectionHasRetryableDecision(selectedGroups, activeSelectionDecision),
+  );
   const reviewableGroupCount = getReviewableGroupCount(senderGroups);
   const presentation = derivePresentation(scan, gmailAuthState);
   const effectivePresentation = pausing
@@ -2394,7 +2931,9 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
     : pausing
       ? "No new mail is being fetched while already-started work settles into the current discovery set."
       : scan?.state === SCAN_STATES.PAUSED
-        ? "Nothing new is being fetched. The current discovery set will stay still until you resume."
+        ? scan.pauseReason === SCAN_PAUSE_REASONS.LEASE_EXPIRED
+          ? "Your processing window expired. Continue to pick up where you left off."
+          : "Pidgeot finished what was already in motion."
         : scan?.state === SCAN_STATES.RESOURCE_LIMIT_REACHED
           ? "The scan stopped at the current message limit. The results below are what Pidgeot has already found."
           : "Live discoveries stay visible here while Pidgeot keeps scanning. Sensitive financial mail stays out of cleanup.";
@@ -2548,6 +3087,17 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
     try {
       const payload = await readJson("/api/scan/status");
       setScan(payload.scan);
+
+      try {
+        const workflowPayload = await readJson("/api/workflow/status");
+        setSelectionWorkflow(workflowPayload.workflow || null);
+        if (workflowPayload.workflow?.scan) {
+          setScan(workflowPayload.workflow.scan);
+        }
+      } catch {
+        setSelectionWorkflow(null);
+      }
+
       setErrorMessage(null);
     } catch (error) {
       setErrorMessage(error.message || "The latest scan status could not be loaded.");
@@ -2624,6 +3174,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
     }
 
     setManualDetailsGroups(sequence);
+    setManualDetailsMode(sequence.length > 1 ? "wizard" : "instructions");
   }
 
   function clearSelection() {
@@ -2708,13 +3259,9 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
     ));
   }
 
-  async function handleSelectionExecution() {
-    if (!activeSelectionDecision || executionRequestState !== "idle" || hasSelectedRunningExecution) {
-      return;
-    }
-
-    const executableGroups = selectedGroups.filter((group) => {
-      if (activeSelectionDecision === "unsubscribe") {
+  async function executeWorkflowGroups(groups, actionType) {
+    const executableGroups = groups.filter((group) => {
+      if (actionType === "unsubscribe") {
         return hasExecutableUnsubscribeAction(group);
       }
 
@@ -2731,8 +3278,8 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
         body: JSON.stringify({
           selections: executableGroups.map((group) => ({
             actions: {
-              cleanup: activeSelectionDecision === "cleanup",
-              unsubscribe: activeSelectionDecision === "unsubscribe",
+              cleanup: actionType === "cleanup",
+              unsubscribe: actionType === "unsubscribe",
             },
             senderGroupId: group.id,
           })),
@@ -2749,6 +3296,43 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
       setErrorMessage(error.message || "The workflow request could not be completed.");
     } finally {
       setExecutionRequestState("idle");
+    }
+  }
+
+  async function handleSelectionExecution() {
+    if (!activeSelectionDecision || executionRequestState !== "idle" || hasSelectedRunningExecution) {
+      return;
+    }
+
+    if (activeSelectionDecision === "unsubscribe" && selectionRecovery?.kind === "usage_limit") {
+      return;
+    }
+
+    await executeWorkflowGroups(selectedGroups, activeSelectionDecision);
+  }
+
+  function handleRecoveryAction(recovery, group = null) {
+    if (!recovery?.actionType) {
+      return;
+    }
+
+    if (recovery.actionType === "resume" || recovery.actionType === "gmail-upgrade") {
+      handleScanAction(recovery.actionType);
+      return;
+    }
+
+    if (recovery.actionType === "manual") {
+      openManualWizard(group ? [group] : selectedManualGroups);
+      return;
+    }
+
+    if (recovery.actionType === "retry") {
+      if (executionRequestState !== "idle" || hasSelectedRunningExecution) {
+        return;
+      }
+
+      const targets = group ? [group] : selectedGroups;
+      executeWorkflowGroups(targets, recovery.retryActionType || "unsubscribe");
     }
   }
 
@@ -2786,7 +3370,11 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
       {showManualDetailsModal ? (
         <ManualUnsubscribeWizard
           groups={manualDetailsGroups}
-          onClose={() => setManualDetailsGroups([])}
+          mode={manualDetailsMode}
+          onClose={() => {
+            setManualDetailsGroups([]);
+            setManualDetailsMode("instructions");
+          }}
           onMarkHandled={(group) => {
             if (!group?.id) {
               return;
@@ -3016,7 +3604,10 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
               onDecisionChange={setSelectionDecision}
               onExecute={handleSelectionExecution}
               onOpenManualDetails={() => openManualWizard(selectedManualGroups)}
+              onRecoveryAction={handleRecoveryAction}
+              recovery={selectionRecovery}
               reducedMotion={reducedMotion}
+              retryable={selectionRetryable}
               selectedCount={selectedCount}
             />
           ) : null}
@@ -3124,9 +3715,10 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
                       armedActionType={selectedGroupIdSet.has(group.id) ? activeSelectionDecision : null}
                       group={group}
                       mode={visibleResultTab === "done" ? "done" : "active"}
-                      onOpenManualDetails={(nextGroup) => openManualWizard([nextGroup])}
+                      onRecoveryAction={handleRecoveryAction}
                       onToggle={() => toggleSelection(group.id)}
                       reducedMotion={reducedMotion}
+                      scan={scan}
                       selected={selectedGroupIdSet.has(group.id)}
                     />
                   </motion.div>

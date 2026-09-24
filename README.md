@@ -89,7 +89,7 @@ Current variables:
 - `SESSION_SECRET`: server-side secret for opaque sessions and HMAC-based derivations
 - `PROCESSING_LEASE_TTL_SECONDS`: server-side processing lease TTL
 - `SCAN_MAX_RETAINED_MESSAGES`: maximum normalized messages retained for one in-memory scan before the scan stops with `RESOURCE_LIMIT_REACHED` (default: `5000`)
-- `AUTOMATIC_UNSUBSCRIBE_MONTHLY_LIMIT`: hard per-account monthly cap for automatic unsubscribe operations; manual-only mechanisms do not consume this quota
+- `AUTOMATIC_UNSUBSCRIBE_LEASE_LIMIT`: automatic unsubscribe allowance for the current processing window; manual-only mechanisms and cleanup do not consume this allowance
 - `GOOGLE_CLIENT_ID`: Google OAuth client ID
 - `GOOGLE_CLIENT_SECRET`: Google OAuth client secret
 - `GOOGLE_REDIRECT_URI`: configured OAuth callback URL

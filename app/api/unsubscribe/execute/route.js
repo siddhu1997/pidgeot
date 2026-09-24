@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getRequiredCurrentAuthSession } from "@/lib/auth/current-session";
+import { getDevelopmentScenarioWorkflow } from "@/lib/dev-lab/workflow-scenario-guard";
 import { createUnsubscribeExecutionService } from "@/lib/unsubscribe/execution-service";
 
 export const runtime = "nodejs";
@@ -37,6 +38,16 @@ export async function POST(request) {
     }
 
     const session = await getRequiredCurrentAuthSession();
+    const scenarioWorkflow = getDevelopmentScenarioWorkflow(session);
+
+    if (scenarioWorkflow) {
+      const group = (scenarioWorkflow.scan?.senderGroups || []).find((entry) => entry.id === body.senderGroupId);
+
+      return NextResponse.json({
+        unsubscribeExecution: group?.workflow?.unsubscribeExecution?.execution || null,
+      });
+    }
+
     const unsubscribeExecution = await createUnsubscribeExecutionService().executeSenderGroup({
       senderGroupId: body.senderGroupId,
       session,

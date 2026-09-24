@@ -62,7 +62,7 @@ function createServiceHarness({
   };
   const service = createUnsubscribeExecutionService({
     config: {
-      automaticUnsubscribeMonthlyLimit: 5000,
+      automaticUnsubscribeLeaseLimit: 5000,
       unsubscribeExecutionConcurrency: 1,
       unsubscribeMaxRedirects: 2,
       unsubscribeMaxResponseBytes: 16 * 1024,
@@ -141,7 +141,8 @@ describe("unsubscribe execution service", () => {
     expect(secondResult.status).toBe("ALL_SUCCEEDED");
     expect(thirdResult.operationResults[0].status).toBe("ALREADY_COMPLETED");
     expect(transportExecute).toHaveBeenCalledTimes(1);
-    expect(service.getAccountUsage({ session: { accountKey: "account-key" } })).toEqual(expect.objectContaining({
+    expect(service.getUsage({ session: { accountKey: "account-key", id: "session-1" } })).toEqual(expect.objectContaining({
+      leaseId: "lease-1",
       remainingCount: 4999,
       successfulCount: 1,
     }));
@@ -293,16 +294,17 @@ describe("unsubscribe execution service", () => {
 
     await service.executeSenderGroup({ senderGroupId: "sg_1", session: { accountKey: "account-key", id: "session-1" } });
 
-    expect(service.getAccountUsage({ session: { accountKey: "account-key" } })).toEqual(expect.objectContaining({
+    expect(service.getUsage({ session: { accountKey: "account-key", id: "session-1" } })).toEqual(expect.objectContaining({
+      leaseId: "lease-1",
       remainingCount: 5000,
       successfulCount: 0,
     }));
   });
 
-  it("enforces the monthly automatic unsubscribe limit per account", async () => {
+  it("enforces the automatic unsubscribe limit for the current processing lease", async () => {
     const usageStore = createUnsubscribeUsageStore();
     const baseConfig = {
-      automaticUnsubscribeMonthlyLimit: 1,
+      automaticUnsubscribeLeaseLimit: 1,
       unsubscribeExecutionConcurrency: 1,
       unsubscribeMaxRedirects: 2,
       unsubscribeMaxResponseBytes: 16 * 1024,
@@ -345,9 +347,50 @@ describe("unsubscribe execution service", () => {
     expect(secondResult.operationResults[0].status).toBe("USAGE_LIMIT_REACHED");
     expect(firstHarness.transportExecute).toHaveBeenCalledTimes(1);
     expect(secondHarness.transportExecute).not.toHaveBeenCalled();
-    expect(secondService.getAccountUsage({ session })).toEqual(expect.objectContaining({
+    expect(secondService.getUsage({ session })).toEqual(expect.objectContaining({
+      leaseId: "lease-1",
       remainingCount: 0,
       state: "LIMIT_REACHED",
+      successfulCount: 1,
+    }));
+  });
+
+  it("starts a fresh allowance when a new processing lease is used", async () => {
+    const usageStore = createUnsubscribeUsageStore();
+    const firstHarness = createServiceHarness({
+      operations: [createOperation("uo_1")],
+      usageStore,
+    });
+    const firstResult = await firstHarness.service.executeSenderGroup({
+      senderGroupId: "sg_1",
+      session: { accountKey: "account-key", id: "session-1" },
+    });
+
+    expect(firstResult.operationResults[0].status).toBe("SUCCESS");
+    expect(firstHarness.service.getUsage({
+      session: { accountKey: "account-key", id: "session-1" },
+    })).toEqual(expect.objectContaining({
+      leaseId: "lease-1",
+      successfulCount: 1,
+    }));
+
+    const nextLease = createLease({ id: "lease-2" });
+    const secondHarness = createServiceHarness({
+      lease: nextLease,
+      operations: [createOperation("uo_2")],
+      usageStore,
+    });
+    const secondResult = await secondHarness.service.executeSenderGroup({
+      senderGroupId: "sg_1",
+      session: { accountKey: "account-key", id: "session-1" },
+    });
+
+    expect(secondResult.operationResults[0].status).toBe("SUCCESS");
+    expect(secondHarness.service.getUsage({
+      session: { accountKey: "account-key", id: "session-1" },
+    })).toEqual(expect.objectContaining({
+      leaseId: "lease-2",
+      remainingCount: 4999,
       successfulCount: 1,
     }));
   });

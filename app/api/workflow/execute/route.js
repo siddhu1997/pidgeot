@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { getRequiredCurrentAuthSession } from "@/lib/auth/current-session";
+import {
+  buildScenarioActionResults,
+  getDevelopmentScenarioWorkflow,
+} from "@/lib/dev-lab/workflow-scenario-guard";
 import { createWorkflowService } from "@/lib/workflow/service";
 
 export const runtime = "nodejs";
@@ -86,6 +90,15 @@ export async function POST(request) {
     }
 
     const session = await getRequiredCurrentAuthSession();
+    const scenarioWorkflow = getDevelopmentScenarioWorkflow(session);
+
+    if (scenarioWorkflow) {
+      return NextResponse.json({
+        actionResults: buildScenarioActionResults(scenarioWorkflow, body.selections),
+        workflow: scenarioWorkflow,
+      });
+    }
+
     const result = await createWorkflowService().executeSelections({
       selections: body.selections,
       session,

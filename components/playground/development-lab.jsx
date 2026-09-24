@@ -8,6 +8,21 @@ import {
   DEV_LAB_LIMITS,
   DEV_LAB_UNSUBSCRIBE_PROFILES,
 } from "@/lib/dev-lab/constants";
+import { WORKFLOW_SCENARIO_IDS } from "@/lib/dev-lab/workflow-scenario-store";
+
+const WORKFLOW_SCENARIO_OPTIONS = [
+  { description: "Show a successful unsubscribe without contacting Gmail or sender endpoints.", id: WORKFLOW_SCENARIO_IDS.COMPLETED, label: "Success" },
+  { description: "Completed senders stay completed. One sender needs attention.", id: WORKFLOW_SCENARIO_IDS.PARTIAL_SUCCESS, label: "Partial success" },
+  { description: "Show Try again without running the real operation.", id: WORKFLOW_SCENARIO_IDS.FAILED_RETRYABLE, label: "Retryable failure" },
+  { description: "Show a needs-attention state that does not invite retry.", id: WORKFLOW_SCENARIO_IDS.FAILED_PERMANENT, label: "Permanent failure" },
+  { description: "Show a calm paused state. Resume stays simulated.", id: WORKFLOW_SCENARIO_IDS.PAUSED, label: "Paused" },
+  { description: "Show Continue without acquiring a real processing window.", id: WORKFLOW_SCENARIO_IDS.LEASE_EXPIRED, label: "Lease expired" },
+  { description: "Show Reconnect Gmail without starting real Google sign-in.", id: WORKFLOW_SCENARIO_IDS.REAUTH_REQUIRED, label: "Reauthentication required" },
+  { description: "Show the existing already-completed presentation.", id: WORKFLOW_SCENARIO_IDS.ALREADY_COMPLETED, label: "Already completed" },
+  { description: "Simulate the point where the current 24-hour processing window has exhausted Pidgeot's automatic unsubscribe allowance.", id: WORKFLOW_SCENARIO_IDS.USAGE_LIMIT_REACHED, label: "Automatic unsubscribe limit reached" },
+  { description: "Keep unsubscribe manual. View instructions remains the path.", id: WORKFLOW_SCENARIO_IDS.MANUAL_ACTION_REQUIRED, label: "Manual action required" },
+  { description: "Keep the path non-executable. No transport request is sent.", id: WORKFLOW_SCENARIO_IDS.UNSAFE_TARGET, label: "Unsafe target" },
+];
 
 function classNames(...items) {
   return items.filter(Boolean).join(" ");
@@ -101,6 +116,8 @@ export function DevelopmentLab({ initialStatus }) {
   const [seed, setSeed] = useState(DEV_LAB_LIMITS.DEFAULT_SEED);
   const [requestState, setRequestState] = useState("idle");
   const [modeRequestState, setModeRequestState] = useState("idle");
+  const [scenarioId, setScenarioId] = useState(WORKFLOW_SCENARIO_IDS.PARTIAL_SUCCESS);
+  const [scenarioRequestState, setScenarioRequestState] = useState("idle");
   const [errorMessage, setErrorMessage] = useState(null);
   const [generation, setGeneration] = useState(null);
   const [sendProgress, setSendProgress] = useState(null);
@@ -215,6 +232,32 @@ export function DevelopmentLab({ initialStatus }) {
       setErrorMessage(error.message || "The execution mode could not be updated.");
     } finally {
       setModeRequestState("idle");
+    }
+  }
+
+  async function handleWorkflowScenario(action) {
+    setScenarioRequestState(action);
+    setErrorMessage(null);
+
+    try {
+      const response = await fetch("/api/dev-lab/workflow-scenario", {
+        body: JSON.stringify(action === "apply" ? { action, scenarioId } : { action }),
+        headers: {
+          "content-type": "application/json",
+        },
+        method: "POST",
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload?.error?.message || "The workflow scenario could not be updated.");
+      }
+
+      setStatus(payload.lab);
+    } catch (error) {
+      setErrorMessage(error.message || "The workflow scenario could not be updated.");
+    } finally {
+      setScenarioRequestState("idle");
     }
   }
 
@@ -364,6 +407,66 @@ export function DevelopmentLab({ initialStatus }) {
               </p>
             )}
           </article>
+        </section>
+
+        <section className="rounded-[24px] border border-white/10 bg-[rgba(7,11,19,0.84)] p-5">
+          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">Workflow scenarios</p>
+          <h2 className="mt-2 text-lg font-semibold text-white">Exercise production recovery states</h2>
+          <p className="mt-1 text-sm text-slate-400">
+            While a scenario is active, production actions stay simulated. Clear the scenario before any real Gmail or
+            unsubscribe work.
+          </p>
+          <label className="mt-4 grid gap-2 text-sm text-slate-300">
+            <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">Scenario</span>
+            <select
+              className={inputClassName}
+              onChange={(event) => setScenarioId(event.target.value)}
+              value={scenarioId}
+            >
+              {WORKFLOW_SCENARIO_OPTIONS.map((option) => (
+                <option key={option.id} value={option.id}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <p className="mt-2 text-xs leading-5 text-slate-500">
+            {WORKFLOW_SCENARIO_OPTIONS.find((option) => option.id === scenarioId)?.description}
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              className="rounded-full border border-amber-300/36 bg-amber-300/14 px-4 py-2 text-sm font-semibold text-[#fbe9b2] disabled:opacity-60"
+              disabled={scenarioRequestState !== "idle"}
+              onClick={() => handleWorkflowScenario("apply")}
+              type="button"
+            >
+              Apply scenario
+            </button>
+            <button
+              className="rounded-full border border-white/12 bg-white/4 px-4 py-2 text-sm font-semibold text-slate-200 disabled:opacity-60"
+              disabled={scenarioRequestState !== "idle"}
+              onClick={() => handleWorkflowScenario("clear")}
+              type="button"
+            >
+              Clear scenario
+            </button>
+            <button
+              className="rounded-full border border-white/12 bg-white/4 px-4 py-2 text-sm font-semibold text-slate-200 disabled:opacity-60"
+              disabled={scenarioRequestState !== "idle"}
+              onClick={() => handleWorkflowScenario("reset")}
+              type="button"
+            >
+              Reset workflow state
+            </button>
+          </div>
+          {status?.workflowScenario ? (
+            <p className="mt-3 text-xs leading-5 text-[#fbe9b2]">
+              Scenario active: {WORKFLOW_SCENARIO_OPTIONS.find((option) => option.id === status.workflowScenario.scenarioId)?.label || status.workflowScenario.scenarioId}.
+              Production actions will not change Gmail until you clear it. Open the production scan and refresh status to inspect the sender cards and selection panel.
+            </p>
+          ) : (
+            <p className="mt-3 text-xs leading-5 text-slate-500">
+              No scenario is active. A scan with sender groups is required before Apply will succeed. Real execution is available only after the scenario is cleared.
+            </p>
+          )}
         </section>
 
         <section className="rounded-[24px] border border-white/10 bg-[rgba(7,11,19,0.84)] p-5">

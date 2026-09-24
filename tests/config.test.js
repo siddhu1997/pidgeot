@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  DEFAULT_AUTOMATIC_UNSUBSCRIBE_MONTHLY_LIMIT,
+  DEFAULT_AUTOMATIC_UNSUBSCRIBE_LEASE_LIMIT,
   DEFAULT_CLEANUP_MUTATION_CONCURRENCY,
   DEFAULT_SCAN_METADATA_CONCURRENCY,
   DEFAULT_SCAN_MAX_RETAINED_MESSAGES,
@@ -47,7 +47,7 @@ describe("getPublicAppConfig", () => {
     vi.stubEnv("SCAN_MAX_RETAINED_MESSAGES", "9000");
     vi.stubEnv("CLEANUP_MUTATION_CONCURRENCY", "4");
     vi.stubEnv("UNSUBSCRIBE_EXECUTION_CONCURRENCY", "3");
-    vi.stubEnv("AUTOMATIC_UNSUBSCRIBE_MONTHLY_LIMIT", "4500");
+    vi.stubEnv("AUTOMATIC_UNSUBSCRIBE_LEASE_LIMIT", "4500");
     vi.stubEnv("UNSUBSCRIBE_MAX_REDIRECTS", "4");
     vi.stubEnv("UNSUBSCRIBE_MAX_RESPONSE_BYTES", "2048");
     vi.stubEnv("UNSUBSCRIBE_REQUEST_TIMEOUT_MS", "7000");
@@ -67,7 +67,7 @@ describe("getPublicAppConfig", () => {
       scanMetadataConcurrency: 6,
       scanMaxRetainedMessages: 9000,
       scanPageSize: 40,
-      automaticUnsubscribeMonthlyLimit: 4500,
+      automaticUnsubscribeLeaseLimit: 4500,
       unsubscribeExecutionConcurrency: 3,
       unsubscribeMaxRedirects: 4,
       unsubscribeMaxResponseBytes: 2048,
@@ -93,7 +93,7 @@ describe("getPublicAppConfig", () => {
     expect(getServerAppConfig().scanMaxRetainedMessages).toBe(DEFAULT_SCAN_MAX_RETAINED_MESSAGES);
     expect(getServerAppConfig().cleanupMutationConcurrency).toBe(DEFAULT_CLEANUP_MUTATION_CONCURRENCY);
     expect(getServerAppConfig().unsubscribeExecutionConcurrency).toBe(DEFAULT_UNSUBSCRIBE_EXECUTION_CONCURRENCY);
-    expect(getServerAppConfig().automaticUnsubscribeMonthlyLimit).toBe(DEFAULT_AUTOMATIC_UNSUBSCRIBE_MONTHLY_LIMIT);
+    expect(getServerAppConfig().automaticUnsubscribeLeaseLimit).toBe(DEFAULT_AUTOMATIC_UNSUBSCRIBE_LEASE_LIMIT);
     expect(getServerAppConfig().unsubscribeMaxRedirects).toBe(DEFAULT_UNSUBSCRIBE_MAX_REDIRECTS);
     expect(getServerAppConfig().unsubscribeMaxResponseBytes).toBe(DEFAULT_UNSUBSCRIBE_MAX_RESPONSE_BYTES);
     expect(getServerAppConfig().unsubscribeRequestTimeoutMs).toBe(DEFAULT_UNSUBSCRIBE_REQUEST_TIMEOUT_MS);
