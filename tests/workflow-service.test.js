@@ -670,4 +670,55 @@ describe("workflow service", () => {
       session: sessionB,
     })).rejects.toMatchObject({ code: "workflow_sender_group_not_found" });
   });
+
+  it("exposes sanitized manual unsubscribe operations without marking them executable", () => {
+    const harness = createWorkflowHarness();
+
+    seedScan({
+      messages: [
+        createMessage("m-manual", {
+          from: "Manual <manual@example.com>",
+          labelIds: ["INBOX"],
+          listUnsubscribe: "<mailto:leave@example.com>",
+        }),
+        createMessage("m-page", {
+          from: "Page <page@example.com>",
+          labelIds: ["INBOX"],
+          listUnsubscribe: "<https://public.example/leave>",
+        }),
+      ],
+      processingLeaseStore: harness.processingLeaseStore,
+      scanStore: harness.scanStore,
+      session: harness.session,
+    });
+
+    const groups = harness.workflowService.getWorkflowStatus({ session: harness.session }).scan.senderGroups;
+    const manualGroup = groups.find((group) => group.representativeAddress === "manual@example.com");
+    const pageGroup = groups.find((group) => group.representativeAddress === "page@example.com");
+
+    expect(manualGroup.workflow.unsubscribeOperationsAvailable).toBe(false);
+    expect(manualGroup.workflow.unsubscribeAutomaticOperationCount).toBe(0);
+    expect(manualGroup.workflow.manualUnsubscribeOperations).toEqual([
+      expect.objectContaining({
+        mailto: expect.objectContaining({
+          recipient: "leave@example.com",
+        }),
+        status: "MANUAL_ACTION_REQUIRED",
+        type: "MAILTO",
+      }),
+    ]);
+    expect(manualGroup.workflow.manualUnsubscribeOperations[0].mailto).not.toHaveProperty("body");
+
+    expect(pageGroup.workflow.unsubscribeOperationsAvailable).toBe(false);
+    expect(pageGroup.workflow.unsubscribeAutomaticOperationCount).toBe(0);
+    expect(pageGroup.workflow.manualUnsubscribeOperations).toEqual([
+      expect.objectContaining({
+        host: "public.example",
+        path: "/leave",
+        status: "MANUAL_ACTION_REQUIRED",
+        target: "https://public.example/leave",
+        type: "HTTPS_LINK",
+      }),
+    ]);
+  });
 });

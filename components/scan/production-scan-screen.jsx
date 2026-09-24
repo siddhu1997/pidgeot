@@ -999,6 +999,28 @@ function getManualUnsubscribeReason(operation) {
   return "Pidgeot found an unsubscribe option, but it still requires a manual action.";
 }
 
+function stopNestedCardEvent(event) {
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function ManualUnsubscribeChip({ onClick }) {
+  return (
+    <button
+      aria-haspopup="dialog"
+      className="rounded-full border border-cyan-300/28 bg-cyan-300/14 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.14em] text-cyan-100 underline-offset-2 transition-colors duration-200 hover:border-cyan-300/48 hover:bg-cyan-300/22 hover:underline"
+      onClick={(event) => {
+        stopNestedCardEvent(event);
+        onClick();
+      }}
+      onKeyDown={stopNestedCardEvent}
+      type="button"
+    >
+      Manual unsubscribe
+    </button>
+  );
+}
+
 function ManualCountButton({ count, disabled, onClick }) {
   return (
     <button
@@ -1093,7 +1115,7 @@ function ManualUnsubscribeDetailsModal({ groups, onClose, reducedMotion }) {
           <div>
             <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-slate-500">Manual unsubscribe</p>
             <h3 id="manual-unsubscribe-title" className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-white">Manual unsubscribe details</h3>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">Pidgeot found unsubscribe options for these senders, but they still require a manual action.</p>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">Automatic unsubscribe is unavailable. These senders still have a manual path.</p>
           </div>
           <button
             className="rounded-2xl border border-white/12 px-3 py-2 text-sm font-semibold text-white transition-colors duration-200 hover:border-white/24 hover:bg-white/8"
@@ -1113,7 +1135,7 @@ function ManualUnsubscribeDetailsModal({ groups, onClose, reducedMotion }) {
               <div key={`manual-${group.id}`} className="rounded-[24px] border border-white/10 bg-white/5 p-4">
                 <p className="text-lg font-semibold text-white">{getGroupTitle(group)}</p>
                 <p className="mt-1 text-sm text-slate-400">{group.representativeAddress || "Representative address unavailable"}</p>
-                <p className="mt-3 text-sm leading-6 text-slate-300">Pidgeot found an unsubscribe option, but it requires a manual action.</p>
+                <p className="mt-3 text-sm leading-6 text-slate-300">Automatic unsubscribe is unavailable for this sender.</p>
 
                 <div className="mt-4 grid gap-3">
                   {manualOperations.length > 0 ? manualOperations.map((operation) => (
@@ -1198,6 +1220,28 @@ function BulkSelectionControls({ allVisibleSelected, disabled, onClearAll, onSel
   );
 }
 
+function ManualUnsubscribeInfoCard({ disabled, onOpenManualDetails }) {
+  return (
+    <div className="flex min-h-[72px] min-w-[220px] flex-1 flex-col items-start justify-center rounded-[22px] border border-white/12 bg-[rgba(7,11,19,0.88)] px-4 py-3 text-left">
+      <span className="text-sm font-semibold text-white">Unsubscribe</span>
+      <span className="mt-1 text-xs leading-5 text-slate-400">Manual action required</span>
+      <button
+        className={classNames(
+          "mt-2 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors duration-200",
+          disabled
+            ? "cursor-not-allowed border-white/8 bg-black/18 text-slate-500"
+            : "border-cyan-300/24 bg-cyan-300/10 text-cyan-100 hover:border-cyan-300/36 hover:bg-cyan-300/16",
+        )}
+        disabled={disabled}
+        onClick={onOpenManualDetails}
+        type="button"
+      >
+        View instructions
+      </button>
+    </div>
+  );
+}
+
 function SelectionActionButton({ active, description, disabled, label, onClick }) {
   return (
     <motion.button
@@ -1238,13 +1282,12 @@ function SelectionActionBar({
 }) {
   const selectionLabel = formatQuantity(selectedCount, "sender");
   const unsubscribeButtonDescription = actionSummary.unsubscribe.enabled
-    ? "Automatic unsubscribe available"
-    : actionSummary.unsubscribe.manualGroupCount > 0
-      ? "Manual review only"
-      : "Unavailable for this selection.";
+    ? actionSummary.unsubscribe.description
+    : "Unavailable for this selection.";
   const cleanupButtonDescription = actionSummary.cleanup.enabled
-    ? "Unread cleanup available"
+    ? actionSummary.cleanup.description
     : "No unread cleanup available.";
+  const manualOnlyUnsubscribe = !actionSummary.unsubscribe.enabled && actionSummary.unsubscribe.manualGroupCount > 0;
   const executionButtonLabel = workflowExecutionMode === "SIMULATED"
     ? activeDecision === "unsubscribe"
       ? "Run simulated unsubscribe"
@@ -1271,22 +1314,31 @@ function SelectionActionBar({
           <p className="mt-2 text-sm leading-6 text-slate-300">What would you like Pidgeot to do with these senders?</p>
         </div>
         <div className="grid gap-2">
-          <SelectionSummaryRow
-            action={actionSummary.unsubscribe}
-            onOpenManualDetails={onOpenManualDetails}
-          />
+          {actionSummary.unsubscribe.enabled ? (
+            <SelectionSummaryRow
+              action={actionSummary.unsubscribe}
+              onOpenManualDetails={onOpenManualDetails}
+            />
+          ) : null}
           <SelectionSummaryRow action={actionSummary.cleanup} />
         </div>
       </div>
 
       <div className="mt-4 flex flex-col gap-3 lg:flex-row">
-        <SelectionActionButton
-          active={activeDecision === "unsubscribe"}
-          description={unsubscribeButtonDescription}
-          disabled={!actionSummary.unsubscribe.enabled || actionLocked}
-          label={actionSummary.unsubscribe.label}
-          onClick={() => onDecisionChange(activeDecision === "unsubscribe" ? null : "unsubscribe")}
-        />
+        {manualOnlyUnsubscribe ? (
+          <ManualUnsubscribeInfoCard
+            disabled={actionLocked}
+            onOpenManualDetails={onOpenManualDetails}
+          />
+        ) : (
+          <SelectionActionButton
+            active={activeDecision === "unsubscribe"}
+            description={unsubscribeButtonDescription}
+            disabled={!actionSummary.unsubscribe.enabled || actionLocked}
+            label={actionSummary.unsubscribe.label}
+            onClick={() => onDecisionChange(activeDecision === "unsubscribe" ? null : "unsubscribe")}
+          />
+        )}
         <SelectionActionButton
           active={activeDecision === "cleanup"}
           description={cleanupButtonDescription}
@@ -1555,7 +1607,7 @@ function ScanRitualSurface({ mode, reducedMotion, scan, senderGroups }) {
   );
 }
 
-function SenderGroupCard({ armedActionType = null, group, mode = "active", reducedMotion, selected, onToggle }) {
+function SenderGroupCard({ armedActionType = null, group, mode = "active", onOpenManualDetails, reducedMotion, selected, onToggle }) {
   const title = getGroupTitle(group);
   const domainChips = group.senderDomains.slice(0, 3);
   const sensitiveFinancial = isSensitiveFinancialGroup(group);
@@ -1563,8 +1615,6 @@ function SenderGroupCard({ armedActionType = null, group, mode = "active", reduc
   const done = mode === "done";
   const statusLabel = done ? "Handled" : getActionabilityLabel(group, false);
   const statusTooltip = done ? "Completed in this simulated workflow session only." : getActionabilityTooltip(statusLabel, group.unsubscribe);
-  const cleanupEligibleCount = getGroupCleanupEligibleCount(group);
-  const unsubscribeAvailability = getGroupUnsubscribeAvailability(group);
   const unsubscribeExecution = group?.workflow?.unsubscribeExecution || null;
   const cleanupExecution = group?.workflow?.cleanupExecution || null;
   const showUnsubscribeSeverSurface = !done && shouldShowUnsubscribeSeverSurface({
@@ -1589,20 +1639,7 @@ function SenderGroupCard({ armedActionType = null, group, mode = "active", reduc
         }
       : null,
   ].filter(Boolean);
-  const selectionDetail = !done && selected
-    ? {
-        cleanup: cleanupEligibleCount > 0
-          ? `Delete unread: ${formatQuantity(cleanupEligibleCount, "message")}`
-          : "Delete unread unavailable",
-        unsubscribe: unsubscribeAvailability.available
-          ? unsubscribeAvailability.automaticCount > 0 && unsubscribeAvailability.manualCount > 0
-            ? "Unsubscribe available: automatic + manual"
-            : unsubscribeAvailability.automaticCount > 0
-              ? "Unsubscribe available"
-              : "Manual unsubscribe only"
-          : "Unsubscribe unavailable",
-      }
-    : null;
+  const showManualUnsubscribeChip = !done && hasManualOnlyUnsubscribeAction(group) && typeof onOpenManualDetails === "function";
   const interactive = !done && actionable;
 
   return (
@@ -1639,7 +1676,7 @@ function SenderGroupCard({ armedActionType = null, group, mode = "active", reduc
           <div className="min-w-0 flex-1">
             <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500">sender group</p>
             {!done && selected ? (
-              <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.18em] text-cyan-100">Selected for action</p>
+              <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.18em] text-cyan-100">Selected</p>
             ) : null}
             <div className="mt-2 min-h-[56px] overflow-hidden">
               <h3 className="text-lg font-semibold leading-7 text-white">{title}</h3>
@@ -1702,24 +1739,21 @@ function SenderGroupCard({ armedActionType = null, group, mode = "active", reduc
                 {formatLabel(group.attention)} attention
               </TooltipTag>
             ) : null}
-            <TooltipTag
-              className={classNames(
-                "rounded-full border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.14em]",
-                getUnsubscribeTone(group.unsubscribe),
-              )}
-              description={ACTIONABILITY_TOOLTIPS[group.unsubscribe?.resolutionStatus] || null}
-            >
-              {getUnsubscribeLabel(group.unsubscribe)}
-            </TooltipTag>
+            {showManualUnsubscribeChip ? (
+              <ManualUnsubscribeChip onClick={() => onOpenManualDetails(group)} />
+            ) : (
+              <TooltipTag
+                className={classNames(
+                  "rounded-full border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.14em]",
+                  getUnsubscribeTone(group.unsubscribe),
+                )}
+                description={ACTIONABILITY_TOOLTIPS[group.unsubscribe?.resolutionStatus] || null}
+              >
+                {getUnsubscribeLabel(group.unsubscribe)}
+              </TooltipTag>
+            )}
           </div>
         </div>
-
-        {selectionDetail ? (
-          <div className="mt-4 rounded-[20px] border border-cyan-300/16 bg-cyan-300/8 px-3 py-3 text-sm text-slate-200">
-            <p>{selectionDetail.unsubscribe}</p>
-            <p className="mt-1">{selectionDetail.cleanup}</p>
-          </div>
-        ) : null}
 
         {showUnsubscribeSeverSurface ? (
           <UnsubscribeSeverSurface
@@ -1803,7 +1837,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   const [selectedIds, setSelectedIds] = useState([]);
   const [selectionDecision, setSelectionDecision] = useState(null);
   const [selectionWorkflow, setSelectionWorkflow] = useState(null);
-  const [manualDetailsOpen, setManualDetailsOpen] = useState(false);
+  const [manualDetailsGroups, setManualDetailsGroups] = useState([]);
   const [activeResultTab, setActiveResultTab] = useState("active");
   const [sortMode, setSortMode] = useState("discovery");
   const [categoryFilters, setCategoryFilters] = useState([]);
@@ -1840,7 +1874,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   const visibleResultTab = activeResultTab === "done" && doneSenderGroups.length > 0
     ? "done"
     : "active";
-  const showManualDetailsModal = manualDetailsOpen && selectedManualGroups.length > 0;
+  const showManualDetailsModal = manualDetailsGroups.length > 0;
   const selectionSnapshot = buildSelectionSnapshot(selectedGroups);
   const selectionActionSummary = getSelectionActionSummary(selectionSnapshot);
   const activeSelectionDecision = selectionDecision === "unsubscribe" && !selectionActionSummary?.unsubscribe.enabled
@@ -2051,7 +2085,6 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
       return;
     }
 
-    setManualDetailsOpen(false);
     setSelectionDecision(null);
     setSelectedIds([]);
   }
@@ -2097,7 +2130,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
       const payload = await readJson(target, { method: "POST" });
       setScan(payload.scan);
       if (actionType === "start") {
-        setManualDetailsOpen(false);
+        setManualDetailsGroups([]);
         setSelectedIds([]);
         setSelectionDecision(null);
         setSelectionWorkflow(null);
@@ -2204,8 +2237,8 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
     <div className="grid gap-6">
       {showManualDetailsModal ? (
         <ManualUnsubscribeDetailsModal
-          groups={selectedManualGroups}
-          onClose={() => setManualDetailsOpen(false)}
+          groups={manualDetailsGroups}
+          onClose={() => setManualDetailsGroups([])}
           reducedMotion={reducedMotion}
         />
       ) : null}
@@ -2366,7 +2399,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
               hasRunningExecution={hasSelectedRunningExecution}
               onDecisionChange={setSelectionDecision}
               onExecute={handleSelectionExecution}
-              onOpenManualDetails={() => setManualDetailsOpen(true)}
+              onOpenManualDetails={() => setManualDetailsGroups(selectedManualGroups)}
               reducedMotion={reducedMotion}
               selectedCount={selectedCount}
               workflowExecutionMode={workflowExecutionMode}
@@ -2491,6 +2524,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
                       armedActionType={selectedGroupIdSet.has(group.id) ? activeSelectionDecision : null}
                       group={group}
                       mode={visibleResultTab === "done" ? "done" : "active"}
+                      onOpenManualDetails={(nextGroup) => setManualDetailsGroups([nextGroup])}
                       onToggle={() => toggleSelection(group.id)}
                       reducedMotion={reducedMotion}
                       selected={selectedGroupIdSet.has(group.id)}
