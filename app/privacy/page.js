@@ -9,6 +9,8 @@ const privacyRules = [
   "Later phases will retain only ephemeral cleanup snapshots with a 24-hour TTL.",
 ];
 
+export const dynamic = "force-dynamic";
+
 export const metadata = {
   title: "Privacy | Pidgeot",
   description: "Privacy posture for the Pidgeot Gmail cleanup project.",

@@ -6,6 +6,7 @@ import { recoverDevelopmentWorkflowScenario } from "@/lib/dev-lab/workflow-scena
 import { buildWorkflowScenarioOutcomes } from "@/lib/dev-lab/workflow-scenario";
 import {
   clearWorkflowScenario,
+  getWorkflowScenario,
   isWorkflowScenarioId,
   setWorkflowScenario,
 } from "@/lib/dev-lab/workflow-scenario-store";
@@ -63,6 +64,18 @@ export async function POST(request) {
     const action = body.action;
 
     if (action === "clear" || action === "reset") {
+      const session = await getRequiredCurrentAuthSession();
+      const currentScenario = getWorkflowScenario();
+
+      if (currentScenario && currentScenario.sessionId !== session.id) {
+        return NextResponse.json({
+          error: {
+            code: "workflow_scenario_not_owned",
+            message: "The active workflow scenario belongs to another session.",
+          },
+        }, { status: 409 });
+      }
+
       clearWorkflowScenario();
 
       return NextResponse.json({

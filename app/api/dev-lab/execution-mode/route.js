@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { getRequiredCurrentAuthSession } from "@/lib/auth/current-session";
 import { assertDevelopmentLabAvailable, getDevLabPublicStatus } from "@/lib/dev-lab/config";
 import { setWorkflowExecutionModeOverride } from "@/lib/workflow/execution-mode-store";
 
@@ -8,6 +9,10 @@ export const runtime = "nodejs";
 function errorStatus(code) {
   if (code === "development_only") {
     return 404;
+  }
+
+  if (code === "session_not_found") {
+    return 401;
   }
 
   if (code === "invalid_execution_mode" || code === "invalid_execution_mode_request") {
@@ -20,6 +25,7 @@ function errorStatus(code) {
 export async function POST(request) {
   try {
     assertDevelopmentLabAvailable();
+    await getRequiredCurrentAuthSession();
 
     let body;
 

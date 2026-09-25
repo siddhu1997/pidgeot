@@ -5,7 +5,6 @@ import { getActiveSessionStore } from "@/lib/auth/active-session-store";
 import { buildOAuthStateCookieOptions, buildSessionCookieOptions, clearAuthCookies } from "@/lib/auth/cookies";
 import {
   ACTIVE_SESSION_COOKIE_NAME,
-  GMAIL_SESSION_STATES,
   GOOGLE_AUTH_FLOWS,
   OAUTH_STATE_COOKIE_NAME,
 } from "@/lib/auth/constants";
@@ -14,6 +13,7 @@ import {
   createConsentRequiredGmailState,
   createGmailReadyState,
   createIdentityOnlyGmailState,
+  hasGrantedGmailModifyScope,
 } from "@/lib/auth/gmail-session";
 import { exchangeCodeForIdentity } from "@/lib/auth/google";
 import { oauthStateStore } from "@/lib/auth/oauth-state-store";
@@ -84,7 +84,9 @@ export async function GET(request) {
     let authStatus = "success";
 
     if (stateRecord.authFlow === GOOGLE_AUTH_FLOWS.GMAIL) {
-      const gmailState = exchangedSession.refreshToken
+      const gmailReady = hasGrantedGmailModifyScope(exchangedSession.grantedScopes)
+        && Boolean(exchangedSession.refreshToken);
+      const gmailState = gmailReady
         ? createGmailReadyState({
             accessToken: exchangedSession.accessToken,
             accessTokenExpiresAt: exchangedSession.accessTokenExpiresAt,
@@ -93,9 +95,12 @@ export async function GET(request) {
           })
         : createConsentRequiredGmailState();
 
-      authStatus = exchangedSession.refreshToken ? "gmail_connected" : "gmail_consent_required";
+      authStatus = gmailReady ? "gmail_connected" : "gmail_consent_required";
 
       if (existingSession && existingSession.accountKey === accountKey) {
+        sessionStore.destroySessionsForAccountKey(accountKey, {
+          exceptSessionId: existingSession.id,
+        });
         session = sessionStore.updateSession(existingSession.id, (currentSession) => ({
           ...currentSession,
           accountKey,

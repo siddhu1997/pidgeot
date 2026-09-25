@@ -24,11 +24,20 @@ import {
   RITUAL_STAGES,
 } from "@/components/scan/production-scan-model";
 import { ManualUnsubscribeWizard } from "@/components/scan/manual-unsubscribe-wizard";
-import {
-  getManualSenderIdentity,
-  isPreviouslyManualHandled,
-  rememberManualHandled,
-} from "@/lib/workflow/manual-unsubscribe-memory";
+
+async function persistManualHandled(senderGroupId) {
+  try {
+    await fetch("/api/workflow/manual-handled", {
+      body: JSON.stringify({ senderGroupId }),
+      headers: {
+        "content-type": "application/json",
+      },
+      method: "POST",
+    });
+  } catch {
+    return;
+  }
+}
 
 function classNames(...items) {
   return items.filter(Boolean).join(" ");
@@ -3163,10 +3172,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   });
   const previouslyHandledWizardIds = new Set(
     manualDetailsGroups
-      .filter((group) => isPreviouslyManualHandled({
-        identity: getManualSenderIdentity(group),
-        scanId: scan?.scanId,
-      }))
+      .filter((group) => group.previouslyManualHandled)
       .map((group) => group.id),
   );
   const discoveryTitle = scan?.state === SCAN_STATES.COMPLETE
@@ -3736,10 +3742,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
               return;
             }
 
-            rememberManualHandled({
-              identity: getManualSenderIdentity(group),
-              scanId: scan?.scanId,
-            });
+            void persistManualHandled(group.id);
             setManualHandledIds((current) => new Set(current).add(group.id));
           }}
           previouslyHandledIds={previouslyHandledWizardIds}

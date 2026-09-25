@@ -15,7 +15,13 @@ export async function POST(request) {
 
   if (sessionId) {
     const sessionStore = getActiveSessionStore(config);
-    sessionStore.destroySession(sessionId);
+    const currentSession = sessionStore.getSession(sessionId);
+
+    if (currentSession?.accountKey) {
+      sessionStore.destroySessionsForAccountKey(currentSession.accountKey);
+    } else {
+      sessionStore.destroySession(sessionId);
+    }
   }
 
   const response = NextResponse.redirect(new URL("/?auth=signed_out", request.url));

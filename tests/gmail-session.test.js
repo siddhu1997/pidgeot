@@ -39,7 +39,6 @@ describe("gmail session helpers", () => {
     };
 
     expect(sanitizeSessionForClient(session)).toEqual({
-      accountKey: "account-key",
       email: "user@example.com",
       expiresAt: 999,
       gmailAuthState: GMAIL_SESSION_STATES.GMAIL_READY,

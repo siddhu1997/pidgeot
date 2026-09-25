@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { getRequiredCurrentAuthSession } from "@/lib/auth/current-session";
 import { assertDevelopmentLabAvailable } from "@/lib/dev-lab/config";
 import { createDevLabService } from "@/lib/dev-lab/service";
 
@@ -8,6 +9,10 @@ export const runtime = "nodejs";
 function errorStatus(code) {
   if (code === "development_only") {
     return 404;
+  }
+
+  if (code === "session_not_found") {
+    return 401;
   }
 
   if (code === "invalid_generation_request") {
@@ -41,6 +46,7 @@ function errorStatus(code) {
 export async function POST(request) {
   try {
     assertDevelopmentLabAvailable();
+    await getRequiredCurrentAuthSession();
 
     let body;
 
