@@ -1,24 +1,24 @@
 import Link from "next/link";
 
-const securityAreas = [
-  {
-    title: "OAuth and session handling",
-    body: "Later phases will validate OAuth state, keep credentials transient in server memory, and avoid browser-accessible token storage.",
-  },
-  {
-    title: "Unsubscribe safety",
-    body: "The unsubscribe fallback path will be treated as an SSRF boundary with strict scheme, redirect, timeout, and private-network protections.",
-  },
-  {
-    title: "Logging discipline",
-    body: "The project direction forbids logging Gmail addresses, message IDs, OAuth tokens, unsubscribe URLs, or other mailbox content.",
-  },
-];
-
 export const metadata = {
   title: "Security | Pidgeot",
-  description: "Security posture for the Pidgeot Gmail cleanup project.",
+  description: "How Pidgeot handles Google sign-in, Gmail access, and unsubscribe requests.",
 };
+
+const securityAreas = [
+  {
+    title: "OAuth and sessions",
+    body: "Google sign-in validates OAuth state and uses PKCE. Session cookies are HttpOnly and SameSite=Lax, and they are marked Secure in production. OAuth tokens stay in server process memory for the active session and are not stored in the browser.",
+  },
+  {
+    title: "Gmail access",
+    body: "The browser never calls Gmail. Scan, metadata reads, and user-selected Trash moves run on the server. Execution endpoints accept sender-group choices, not Gmail message IDs supplied by the browser.",
+  },
+  {
+    title: "Unsubscribe requests",
+    body: "Automatic unsubscribe runs on the server against the mechanism advertised on the email. Targets are checked before the request is sent. The browser does not supply unsubscribe URLs for execution.",
+  },
+];
 
 export default function SecurityPage() {
   return (
@@ -26,15 +26,14 @@ export default function SecurityPage() {
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 rounded-[28px] border border-white/12 bg-[rgba(7,11,19,0.84)] p-6 md:p-8">
         <div className="space-y-3">
           <p className="font-mono text-xs uppercase tracking-[0.28em] text-slate-400">
-            Security posture
+            Security
           </p>
           <h1 className="text-4xl font-semibold tracking-[-0.04em] text-white">
-            The highest-risk surfaces are identified before they are implemented.
+            Pidgeot keeps Gmail work on the server.
           </h1>
           <p className="max-w-3xl text-base leading-7 text-slate-300">
-            Google sign-in and Gmail connection are already part of the current product surface.
-            This page keeps the security model explicit as inbox scanning, unsubscribe work, and
-            cleanup flows continue to expand.
+            This page summarizes how the current application handles sign-in, Gmail, and
+            unsubscribe. It is not a formal audit or a claim of zero risk.
           </p>
         </div>
 
@@ -45,11 +44,6 @@ export default function SecurityPage() {
               <p className="mt-2 text-sm leading-6 text-slate-300">{area.body}</p>
             </article>
           ))}
-        </div>
-
-        <div className="rounded-[22px] border border-dashed border-cyan-300/35 bg-cyan-300/8 p-4 text-sm leading-6 text-cyan-100">
-          Full threat-model documentation, deeper CSRF hardening, dependency auditing, and SSRF
-          tests will continue to expand alongside the relevant Gmail and unsubscribe features.
         </div>
 
         <Link

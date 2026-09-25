@@ -15,7 +15,7 @@ const ibmPlexMono = IBM_Plex_Mono({
 export const metadata = {
   title: "Pidgeot",
   description:
-    "Privacy-first Gmail cleanup, built in phases with ephemeral state and explicit user control.",
+    "Pidgeot helps you find recurring Gmail senders and choose unsubscribe or Gmail Trash cleanup yourself. No external AI classification.",
 };
 
 export default function RootLayout({ children }) {

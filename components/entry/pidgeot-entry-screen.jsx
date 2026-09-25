@@ -180,7 +180,7 @@ function SecondaryActions({ email, ready }) {
       {!ready ? (
         <div className="flex gap-3 text-sm text-slate-400">
           <Link className="hover:text-white focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white" href="/privacy">
-            Privacy
+            Privacy policy
           </Link>
           <Link className="hover:text-white focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white" href="/security">
             Security
@@ -224,7 +224,8 @@ export function PidgeotEntryScreen({ authConfigured, email, gmailAuthState }) {
                     Some you chose. Some you forgot about. Some you never meant to keep.
                   </p>
                   <p className="max-w-2xl text-base leading-7 text-slate-300 sm:text-lg">
-                    Pidgeot finds the recurring senders hiding in your Gmail and puts you back in control.
+                    After Google sign-in, you can connect Gmail. Pidgeot then reads message metadata—not
+                    bodies—to find recurring and low-value senders, and you choose what happens next.
                   </p>
                 </>
               )}
@@ -238,7 +239,7 @@ export function PidgeotEntryScreen({ authConfigured, email, gmailAuthState }) {
                 className="inline-flex items-center justify-center rounded-full border border-white/14 px-5 py-3 text-sm font-semibold text-white transition-colors duration-200 hover:border-white/30 hover:bg-white/6 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white"
                 href="/privacy"
               >
-                Privacy notes
+                Privacy policy
               </Link>
             ) : null}
           </div>
@@ -246,12 +247,21 @@ export function PidgeotEntryScreen({ authConfigured, email, gmailAuthState }) {
           <p className="max-w-2xl text-sm leading-6 text-slate-400">{flow.supportingText}</p>
 
           <div className="flex flex-wrap gap-3 text-sm text-slate-300">
-            <span className="rounded-full border border-white/10 bg-white/4 px-3 py-2">Groups recurring senders</span>
-            <span className="rounded-full border border-white/10 bg-white/4 px-3 py-2">Lets you choose the cleanup</span>
-            <span className="rounded-full border border-white/10 bg-white/4 px-3 py-2">Built for a privacy-first workflow</span>
+            <span className="rounded-full border border-white/10 bg-white/4 px-3 py-2">Reads Gmail metadata</span>
+            <span className="rounded-full border border-white/10 bg-white/4 px-3 py-2">You choose each sender</span>
+            <span className="rounded-full border border-white/10 bg-white/4 px-3 py-2">Trash, not permanent delete</span>
           </div>
 
           {email ? <SecondaryActions email={email} ready={readyShell} /> : null}
+
+          <div className="flex flex-wrap gap-4 text-sm text-slate-400">
+            <Link className="hover:text-white focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white" href="/privacy">
+              Privacy policy
+            </Link>
+            <Link className="hover:text-white focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white" href="/security">
+              Security
+            </Link>
+          </div>
 
           <AnimatePresence initial={false}>
             {readyShell && enteredReadyShell ? (
@@ -277,7 +287,10 @@ export function PidgeotEntryScreen({ authConfigured, email, gmailAuthState }) {
           <ConceptIllustration stage={flow.stage} />
           <div className="rounded-[28px] border border-white/10 bg-[rgba(8,14,25,0.86)] p-5">
             <p className="text-sm leading-7 text-slate-300">
-              Pidgeot finds the senders filling your inbox, groups the noise, and gives you simple choices: keep, unsubscribe, or clean up.
+              Pidgeot groups recurring senders from Gmail metadata and leaves the next step to you: keep them,
+              submit the sender&apos;s unsubscribe request, or move selected unread mail to Gmail Trash.
+              Classification is local—Pidgeot does not send mailbox data to an external AI or LLM.
+              An unsubscribe request does not guarantee that mail will stop.
             </p>
           </div>
         </motion.aside>

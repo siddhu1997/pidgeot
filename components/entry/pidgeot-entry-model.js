@@ -15,7 +15,7 @@ export function getEntryFlowState({ authConfigured, email, gmailAuthState }) {
   if (!email) {
     return {
       description:
-        "Find recurring senders, newsletters and low-value mail hiding in your Gmail. Pidgeot groups the noise so you can decide what to keep, unsubscribe from, or clean up.",
+        "Find recurring senders, newsletters and low-value mail hiding in your Gmail. Pidgeot groups the noise so you can decide what to keep, unsubscribe from, or move unread mail to Trash.",
       primaryAction: {
         action: "/api/auth/google/start",
         kind: "form",
@@ -23,7 +23,7 @@ export function getEntryFlowState({ authConfigured, email, gmailAuthState }) {
       },
       stage: "public",
       supportingText:
-        "Google sign-in creates your Pidgeot session first. Gmail access is requested separately in the next step.",
+        "Google sign-in creates your Pidgeot session first. Gmail access is requested separately so you can review what Pidgeot will read before any scan begins.",
       title: "Make sense of the inbox you already have.",
     };
   }
