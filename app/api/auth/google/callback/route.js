@@ -21,14 +21,14 @@ import { getServerAppConfig, isAuthConfigured } from "@/lib/config";
 
 export const runtime = "nodejs";
 
-function buildRedirect(request, statusKey, statusValue) {
-  const url = new URL("/", request.url);
+function buildRedirect(config, statusKey, statusValue) {
+  const url = new URL("/", `${config.appBaseUrl}/`);
   url.searchParams.set(statusKey, statusValue);
   return url;
 }
 
-function buildAuthRedirectResponse(request, key, value, config) {
-  const response = NextResponse.redirect(buildRedirect(request, key, value));
+function buildAuthRedirectResponse(config, key, value) {
+  const response = NextResponse.redirect(buildRedirect(config, key, value));
   response.cookies.set(OAUTH_STATE_COOKIE_NAME, "", {
     ...buildOAuthStateCookieOptions(config),
     maxAge: 0,
@@ -44,27 +44,27 @@ export async function GET(request) {
   const returnedState = request.nextUrl.searchParams.get("state");
   const googleError = request.nextUrl.searchParams.get("error");
 
-  const cleanupResponse = buildAuthRedirectResponse(request, "auth", "cancelled", config);
+  const cleanupResponse = buildAuthRedirectResponse(config, "auth", "cancelled");
 
   if (!isAuthConfigured(config)) {
-    cleanupResponse.headers.set("location", buildRedirect(request, "authError", "config").toString());
+    cleanupResponse.headers.set("location", buildRedirect(config, "authError", "config").toString());
     return cleanupResponse;
   }
 
   if (googleError) {
-    cleanupResponse.headers.set("location", buildRedirect(request, "authError", "denied").toString());
+    cleanupResponse.headers.set("location", buildRedirect(config, "authError", "denied").toString());
     return cleanupResponse;
   }
 
   if (!code || !returnedState || !stateFromCookie || !areEqualOpaqueValues(stateFromCookie, returnedState)) {
-    cleanupResponse.headers.set("location", buildRedirect(request, "authError", "state").toString());
+    cleanupResponse.headers.set("location", buildRedirect(config, "authError", "state").toString());
     return cleanupResponse;
   }
 
   const stateRecord = oauthStateStore.consumeState(returnedState);
 
   if (!stateRecord) {
-    cleanupResponse.headers.set("location", buildRedirect(request, "authError", "expired_state").toString());
+    cleanupResponse.headers.set("location", buildRedirect(config, "authError", "expired_state").toString());
     return cleanupResponse;
   }
 
@@ -129,7 +129,7 @@ export async function GET(request) {
       });
     }
 
-    const response = NextResponse.redirect(buildRedirect(request, "auth", authStatus));
+    const response = NextResponse.redirect(buildRedirect(config, "auth", authStatus));
     response.cookies.set(
       ACTIVE_SESSION_COOKIE_NAME,
       session.id,
@@ -141,7 +141,7 @@ export async function GET(request) {
     });
     return response;
   } catch {
-    cleanupResponse.headers.set("location", buildRedirect(request, "authError", "exchange").toString());
+    cleanupResponse.headers.set("location", buildRedirect(config, "authError", "exchange").toString());
     return cleanupResponse;
   }
 }

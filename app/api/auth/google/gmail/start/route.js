@@ -16,8 +16,8 @@ import { recoverDevelopmentWorkflowScenario } from "@/lib/dev-lab/workflow-scena
 
 export const runtime = "nodejs";
 
-function redirectWithStatus(request, key, value) {
-  const url = new URL("/", request.url);
+function redirectWithStatus(config, key, value) {
+  const url = new URL("/", `${config.appBaseUrl}/`);
   url.searchParams.set(key, value);
   return NextResponse.redirect(url);
 }
@@ -26,7 +26,7 @@ async function startGmailGoogleAuth(request) {
   const config = getServerAppConfig();
 
   if (!isAuthConfigured(config)) {
-    return redirectWithStatus(request, "authError", "config");
+    return redirectWithStatus(config, "authError", "config");
   }
 
   const cookieStore = await cookies();

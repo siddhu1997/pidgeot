@@ -9,17 +9,17 @@ import { getServerAppConfig, isAuthConfigured } from "@/lib/config";
 
 export const runtime = "nodejs";
 
-function redirectWithStatus(request, key, value) {
-  const url = new URL("/", request.url);
+function redirectWithStatus(config, key, value) {
+  const url = new URL("/", `${config.appBaseUrl}/`);
   url.searchParams.set(key, value);
   return NextResponse.redirect(url);
 }
 
-async function startGoogleAuth(request) {
+async function startGoogleAuth() {
   const config = getServerAppConfig();
 
   if (!isAuthConfigured(config)) {
-    return redirectWithStatus(request, "authError", "config");
+    return redirectWithStatus(config, "authError", "config");
   }
 
   const codeVerifier = createPkceCodeVerifier();
@@ -44,10 +44,10 @@ async function startGoogleAuth(request) {
   return response;
 }
 
-export async function GET(request) {
-  return startGoogleAuth(request);
+export async function GET() {
+  return startGoogleAuth();
 }
 
-export async function POST(request) {
-  return startGoogleAuth(request);
+export async function POST() {
+  return startGoogleAuth();
 }

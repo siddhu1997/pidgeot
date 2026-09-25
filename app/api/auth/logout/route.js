@@ -8,7 +8,7 @@ import { getServerAppConfig } from "@/lib/config";
 
 export const runtime = "nodejs";
 
-export async function POST(request) {
+export async function POST() {
   const config = getServerAppConfig();
   const cookieStore = await cookies();
   const sessionId = cookieStore.get(ACTIVE_SESSION_COOKIE_NAME)?.value;
@@ -24,7 +24,7 @@ export async function POST(request) {
     }
   }
 
-  const response = NextResponse.redirect(new URL("/?auth=signed_out", request.url));
+  const response = NextResponse.redirect(new URL("/?auth=signed_out", `${config.appBaseUrl}/`));
   clearAuthCookies(response);
   response.cookies.set(ACTIVE_SESSION_COOKIE_NAME, "", {
     ...buildSessionCookieOptions(config),
