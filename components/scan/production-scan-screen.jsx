@@ -1998,7 +1998,6 @@ function ManualUnsubscribeInfoCard({ disabled, emphasized = false, label, onOpen
 function getRecommendedSelectionAction(actionSummary, recovery = null) {
   const unsubscribeBlocked = recovery?.kind === "reauth"
     || recovery?.kind === "lease_expired"
-    || recovery?.kind === "paused"
     || recovery?.kind === "usage_limit"
     || recovery?.kind === "failed"
     || recovery?.kind === "failed_permanent"
@@ -2147,7 +2146,6 @@ function SelectionActionBar({
       : "Move unread to Trash";
   const unsubscribeBlocked = recovery?.kind === "reauth"
     || recovery?.kind === "lease_expired"
-    || recovery?.kind === "paused"
     || recovery?.kind === "usage_limit";
   const actionLocked = executionRequestState !== "idle" || hasRunningExecution;
   const executeDisabled = !activeDecision
