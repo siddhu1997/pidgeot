@@ -14,15 +14,16 @@ Pidgeot is designed to be:
 ## Core architectural boundaries
 
 - `app/`: UI routes and API routes
-- `lib/auth/`: Google OAuth, session cookies, state validation
+- `lib/auth/`: Google OAuth, session cookies, state validation, and Gmail-ready session helpers
 - `lib/gmail/`: Gmail client and quota-aware request wrapper
 - `lib/scanning/`: incremental mailbox traversal, checkpointing, and metadata normalization
 - `lib/grouping/`: deterministic sender identity normalization and sender grouping
 - `lib/classification/`: deterministic candidate classification
-- `lib/unsubscribe/`: standards-first unsubscribe detection and execution
-- `lib/sessions/`: process-local active session and later snapshot abstractions
-- `lib/security/`: URL validation, cookie rules, CSRF, sanitization helpers
-- `lib/dev-lab/`: development-only mail generation and unsubscribe target. Never imported by production scanner, classifier, grouping, OAuth, or execution code.
+- `lib/unsubscribe/`: standards-first unsubscribe detection, URL/DNS validation, and execution
+- `lib/cleanup/`: user-selected Gmail Trash execution against the current scan snapshot
+- `lib/workflow/`: sender-group workflow orchestration, including optional development simulation
+- `lib/sessions/`: process-local active session and processing-lease abstractions; later snapshot modules are not present
+- `lib/dev-lab/`: development-only mail generation, workflow scenarios, and unsubscribe target. Never imported by production scanner, classifier, grouping, OAuth, or execution code.
 - `lib/dev-mail/`: development-only Brevo/Mailgun adapter, failover, and provider-neutral message model. Never imported by production scanner, classifier, grouping, OAuth, or execution code.
 
 ## Storage model
@@ -35,9 +36,11 @@ The application uses server-side opaque session identifiers. The browser stores 
 
 That browser session cookie must contain only the opaque session ID. It must not contain email, Google subject, account key, OAuth tokens, or Gmail data.
 
-The active authentication session is a process-local in-memory record. It may temporarily contain the verified email, Google subject, and derived account key because those values are needed to maintain the authenticated session and support future authenticated cross-device restoration.
+The active authentication session is a process-local in-memory record. It may temporarily contain the verified email, Google subject, and derived account key because those values are needed to maintain the authenticated session. Account key is an internal server-side identifier and is not included in browser-facing session or scan payloads.
 
-Once Gmail access is enabled, that same active session may also temporarily contain a refresh token, current access token, access-token expiry metadata, and a Gmail auth state such as `GMAIL_READY` or `REAUTH_REQUIRED`. These values remain server-only, process-local, and memory-only.
+One Google account has at most one active Pidgeot session in the process. A successful identity login replaces existing sessions for that account key. Logout invalidates all sessions for that account key. This is application-session invalidation, not Google grant revocation.
+
+Once Gmail access is enabled, that same active session may also temporarily contain a refresh token, current access token, access-token expiry metadata, and a Gmail auth state such as `GMAIL_READY` or `REAUTH_REQUIRED`. These values remain server-only, process-local, and memory-only. `GMAIL_READY` requires both usable refresh-token state and a granted `gmail.modify` scope.
 
 Offline access is required for the Gmail-capable session because a large incremental mailbox scan must not fail arbitrarily after a single access-token lifetime. The refresh token is used only in server memory to obtain fresh access tokens when needed.
 
@@ -56,7 +59,7 @@ New scan or cleanup work requires both:
 - an authenticated session in a Gmail-capable ready state
 - a valid processing lease owned by that session
 
-Heartbeat renews the lease while the client is actively using the application. If the lease expires or is explicitly paused, no new processing begins, although already in-flight work may finish where practical.
+The lease has a configured TTL. If the lease expires or is explicitly paused, no new processing begins, although already in-flight work may finish where practical.
 
 ## Snapshot model
 
@@ -66,11 +69,19 @@ That future cleanup snapshot must remain conceptually separate from the active a
 
 Gmail credentials are never part of the 24-hour cleanup snapshot.
 
+That snapshot model is planned only. It is not implemented, and process restart does not currently restore cleanup progress across devices.
+
 ## Gmail client boundary
 
 All Gmail API access must flow through a narrow server-side Gmail client facade. The browser never calls Gmail directly, never receives Gmail OAuth tokens, and never receives arbitrary Gmail API responses.
 
-In Phase 2B, that facade now supports mailbox listing and metadata-only retrieval for the scanner. It still does not expose full-message or body retrieval, Trash mutation, or arbitrary Gmail API proxy behavior.
+The facade supports only:
+
+- `messages.list`
+- metadata-only `messages.get`
+- `messages.trash`
+
+It does not expose full-message or body retrieval, permanent deletion, or arbitrary Gmail API proxy behavior. Browser execution endpoints accept sender-group identities and requested actions; Gmail message IDs and unsubscribe URLs are derived server-side.
 
 The Gmail client boundary centralizes:
 
@@ -92,7 +103,7 @@ The scan engine:
 - normalizes the metadata into a deterministic internal representation
 - makes partial normalized results available in process-local scan state as each chunk commits
 - never fetches bodies, attachments, snippets, or full MIME payloads
-- never modifies Gmail state
+- never modifies Gmail state; Trash mutation is a separate user-selected cleanup step
 
 The scan checkpoint remains process-local and ephemeral. It stores only scan IDs, source state, page tokens, bounded pending message IDs for the current page, counters, timestamps, and normalized metadata needed by later phases.
 
@@ -137,7 +148,7 @@ The resolver:
 - deduplicates identical operations conservatively while preserving distinct mechanisms
 - exposes only sanitized mechanism summaries in browser-facing scan state while keeping raw operational targets server-side
 
-Network-level SSRF protection, DNS validation, redirect validation, and actual unsubscribe execution remain deferred to the later execution phase.
+Network-level SSRF protection, DNS validation, redirect validation, and unsubscribe execution are handled by the separate execution layer below.
 
 ## Unsubscribe execution model
 
@@ -153,7 +164,19 @@ The execution layer:
 - never forwards Gmail credentials, browser cookies, browser authorization headers, or arbitrary browser-supplied request data
 - keeps idempotency and duplicate-execution guards in process-local memory only
 
-Normal HTTPS pages that require interaction, authentication, JavaScript, form discovery, cookies, or other unsupported flows remain manual.
+Normal HTTPS pages that require interaction, authentication, JavaScript, form discovery, cookies, or other unsupported flows remain manual. MAILTO targets are presented as instructions for the user. A submitted or completed unsubscribe request does not guarantee that the sender will never send mail again.
+
+## Cleanup execution model
+
+User-selected cleanup moves eligible unread messages to Gmail Trash through `messages.trash`. It does not permanently delete mail.
+
+The current scan snapshot is authoritative for cleanup eligibility. Gmail may have changed since discovery. If Trash rejects an individual message as no longer mutable, that message is skipped and reconciled as no longer actionable; the workflow can complete when no actionable work remains. Authentication, quota, retryable network, and other systemic failures remain failures. Cleanup does not add a pre-trash Gmail metadata re-fetch.
+
+## Workflow simulation
+
+Development may default workflow execution to simulation when `DEV_SIMULATE_WORKFLOW_EXECUTION` is unset. The Development Lab may override that mode in development only.
+
+Production does not silently default to simulation or live execution. Production requires an explicit `true` or `false` value; missing or invalid configuration fails closed. An operator may still set the flag to `true` in production.
 
 ## Runtime model
 
@@ -161,6 +184,6 @@ The intended deployment model favors a traditional Node.js process or similar lo
 
 ## Tradeoff
 
-Because v1 uses process-local state, a process restart destroys active sessions and snapshots. This is intentional in v1 and accepted explicitly rather than being hidden behind premature persistent storage.
+Because v1 uses process-local state, a process restart destroys active sessions, scans, leases, and workflow memory. This is intentional in v1 and accepted explicitly rather than being hidden behind premature persistent storage. The later snapshot model, if implemented, would share that process-local constraint.
 
 That same restart also destroys in-memory Gmail credential state and any active processing leases.

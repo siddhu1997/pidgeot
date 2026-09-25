@@ -2,46 +2,43 @@
 
 ## Current phase scope
 
-The current implementation uses Google authentication, Gmail-capable server-side sessions, and the Phase 2B incremental scanner foundation. Cleanup actions are not yet implemented.
+The current implementation uses Google authentication, Gmail-capable server-side sessions, incremental metadata scanning, RFC 8058-style unsubscribe execution, and user-selected Gmail Trash cleanup.
 
 ## Scope policy
 
 Use the narrowest scopes necessary for the current phase.
 
-Current auth-only implementation target:
+Identity flow:
 
 - `openid`
 - `email`
 
-Gmail-capable implementation target:
+Gmail-capable flow:
 
+- `openid`
+- `email`
 - `https://www.googleapis.com/auth/gmail.modify`
 
 ## Why the current scopes are required
 
 - `openid`: allows Google identity assertion in the OAuth flow
-- `email`: allows recovery of the authenticated account email needed for account association and future snapshot restoration
+- `email`: allows recovery of the authenticated account email needed for account association
+- `gmail.modify`: allows metadata scanning and moving user-selected unread messages to Gmail Trash
 
 ## Why the Gmail scope remains narrow
 
-The implementation now scans mailboxes incrementally through `messages.list` and metadata-only `messages.get`, but it still does not modify Gmail state. The scope therefore remains limited to `gmail.modify` without expanding into broader Gmail permissions.
+The implementation scans mailboxes incrementally through `messages.list` and metadata-only `messages.get`, and it moves user-selected unread messages with `messages.trash`. The scope remains limited to `gmail.modify` without expanding into broader Gmail permissions.
 
-When Gmail processing is explicitly enabled by the user, the Gmail-capable flow should request:
+The Gmail-capable flow uses offline access so the server can refresh access tokens during a long-running in-memory session without persisting credentials.
 
-- `openid`
-- `email`
-- `https://www.googleapis.com/auth/gmail.modify`
-
-That Gmail-capable flow should use offline access so the server can refresh access tokens during a long-running in-memory session without persisting credentials.
-
-The Phase 1 identity-only flow must remain separate and must not silently request Gmail access.
+The identity-only flow remains separate and does not silently request Gmail access.
 
 ## Environment variables
 
 - `GOOGLE_CLIENT_ID`
 - `GOOGLE_CLIENT_SECRET`
 - `GOOGLE_REDIRECT_URI`
-- `APP_BASE_URL`
+- `APP_BASE_URL`: development may use a localhost fallback. Production requires an explicit absolute HTTPS origin.
 - `SESSION_SECRET`
 
 ## Local callback shape
@@ -66,4 +63,4 @@ The Gmail-capable flow may yield a refresh token. That refresh token must remain
 
 It must never be written to cookies, localStorage, sessionStorage, logs, or cleanup snapshots.
 
-If Google does not return a usable refresh token during the Gmail-capable consent flow, the session must not be treated as Gmail-capable.
+A session is Gmail-ready only when both a usable refresh token and a granted `gmail.modify` scope are present. Missing either one leaves the session in the existing consent-required path. Application logout invalidates Pidgeot sessions for that account and does not revoke the Google OAuth grant.

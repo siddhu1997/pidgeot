@@ -4,11 +4,15 @@ This project treats Gmail quota as a first-class constraint.
 
 ## Current state
 
-Phase 2B now uses Gmail mailbox scanning primitives, but only for bounded `messages.list` discovery and metadata-only `messages.get` retrieval.
+The Gmail client uses only:
+
+- bounded `messages.list` discovery
+- metadata-only `messages.get` retrieval
+- `messages.trash` for user-selected unread cleanup
 
 ## Design direction
 
-When Gmail integration is added, the scanner must favor:
+The scanner favors:
 
 - `messages.list` over eager full-message fetches
 - minimal metadata retrieval
@@ -16,10 +20,11 @@ When Gmail integration is added, the scanner must favor:
 - retry with exponential backoff and jitter
 - explicit handling of 429 and transient 5xx failures
 
-The Gmail client foundation currently centralizes only the Gmail API costs used by the active scanning boundary:
+The Gmail client foundation currently centralizes the Gmail API costs used by the implemented methods:
 
 - `messages.list`: 5
 - `messages.get`: 20
+- `messages.trash`: 5
 
 Additional method costs should be introduced only when later phases actually add those operations.
 
@@ -31,9 +36,8 @@ The project must not use a naive `list -> get every message -> process everythin
 
 ## Planned documentation expansion
 
-As the Gmail client lands, this document should be updated with:
+Further detail can be added later for:
 
-- approximate quota cost assumptions
 - concurrency defaults
 - retry policy
 - mailbox scan batching behavior

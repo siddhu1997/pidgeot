@@ -5,7 +5,7 @@ This document is a preparation checklist, not a claim that verification is compl
 ## Project owner checklist
 
 1. Create a dedicated Google Cloud project for development.
-2. Enable the Gmail API for that project when Gmail access is actually implemented.
+2. Enable the Gmail API for that project. The current Gmail-capable flow uses it.
 3. Configure the Google Auth Platform and consent screen.
 4. Set branding, authorized domains, and support email.
 5. Add only the exact OAuth scopes used by the current release.
@@ -22,13 +22,13 @@ This document is a preparation checklist, not a claim that verification is compl
 
 ## Scope justification direction
 
-Current phase:
+Identity flow:
 
-- identity-only scopes for Google authentication
+- `openid` and `email` for Google authentication and account association
 
-Later Gmail cleanup release:
+Gmail-capable flow:
 
-- explain that Gmail access is needed to discover recurring senders, inspect unsubscribe metadata, and move user-selected unread messages to Trash
+- explain that `gmail.modify` is needed to discover recurring senders, inspect unsubscribe metadata, and move user-selected unread messages to Trash
 - explain that send, settings, Drive, Calendar, and unrelated scopes are not required
 
 ## Reviewer expectations

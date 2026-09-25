@@ -16,26 +16,29 @@ The highest-risk surfaces are:
 
 ## Current controls
 
-At the current stage, the application aims to:
+The application currently:
 
-- use cryptographically random opaque session identifiers
-- keep session cookies `HttpOnly` and `SameSite=Lax`
-- mark cookies `Secure` in production
-- validate OAuth `state`
-- avoid browser-accessible token storage
-- avoid third-party analytics and error-reporting providers
+- uses cryptographically random opaque session identifiers
+- keeps session cookies `HttpOnly` and `SameSite=Lax`
+- marks cookies `Secure` in production
+- validates OAuth `state` and uses PKCE
+- keeps one active Pidgeot session per account key
+- confines OAuth tokens to process memory and does not persist them
+- requires `gmail.modify` plus a refresh token before a session is Gmail-ready
+- validates unsubscribe targets, pins DNS, and bounds redirects, timeouts, and retries
+- applies local quota-aware retry and backoff around the implemented Gmail methods
+- avoids browser-accessible token storage
+- avoids third-party analytics, tracking, and error-reporting providers
+
+These are implemented boundaries, not a claim of formal certification or zero risk.
 
 ## Planned controls
 
-Later phases must add and test:
+Later phases, if pursued, still need:
 
 - CSRF protection for state-changing endpoints
-- Gmail token confinement to server memory
-- ephemeral snapshot TTL cleanup
-- SSRF protections for unsubscribe fallback
-- redirect target validation
-- quota-aware retry and backoff logic
-- log scrubbing and error sanitization
+- ephemeral snapshot TTL cleanup, if snapshots are implemented
+- continued log scrubbing and error sanitization reviews
 
 ## Logging rules
 

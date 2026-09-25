@@ -48,9 +48,11 @@ Quick Tunnels are acceptable for temporary development but should not be treated
 
 ## Development Lab
 
-`/playground` is the Development Lab in development mode. Production builds render the route as unavailable, and every `/api/dev-lab/*` handler independently rejects production requests.
+`/playground` is the Development Lab in development mode. Production builds render the route as unavailable, and every `/api/dev-lab/*` handler independently rejects production requests with a 404.
 
-This infrastructure sends real mail to a configured test inbox. It is development-only. Do not enable it in production.
+Mutating Lab actions (mail generation, execution-mode changes, and workflow-scenario apply/clear/reset) require an authenticated Pidgeot session. They do not require Gmail-ready authorization unless the specific action already needs Gmail. Scenario clear/reset refuse a scenario owned by another session.
+
+This infrastructure can send real mail to a configured test inbox. It is development-only. Do not enable it in production. Do not treat the Lab as production functionality.
 
 ### Configure the development mail sender
 
@@ -124,7 +126,7 @@ This lab delivers real email. Keep `DEV_MAIL_ENABLED` off unless you intend to s
 
 ## Current limitations
 
-- Gmail scanning is process-local and request-driven in Phase 2B; it is not backed by durable storage or workers.
-- Sender grouping, classification, unsubscribe-mechanism resolution, and unsubscribe execution are process-local and derived from scan results in Phase 3A, Phase 3B, Phase 4A, and Phase 4B.
-- Cleanup and Gmail mutation are not yet implemented.
+- Gmail scanning, sender grouping, classification, unsubscribe execution, and Trash cleanup are process-local and request-driven. They are not backed by durable storage or workers.
+- Development may simulate workflow execution. Production requires an explicit `DEV_SIMULATE_WORKFLOW_EXECUTION` value and does not silently default to simulation.
+- 24-hour cleanup snapshots are not implemented. A process restart clears in-memory auth, scan, and workflow state.
 - Process-local state means auth and scan state are not designed for horizontal scaling in v1.
