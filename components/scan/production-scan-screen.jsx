@@ -1392,6 +1392,10 @@ function hasResolvedAutomaticUnsubscribe(group) {
     || group?.workflow?.unsubscribeExecution?.state === WORKFLOW_EXECUTION_STATES.COMPLETED;
 }
 
+function hasAutomaticUnsubscribeResolvedToManual(group) {
+  return getExecutionOutcome(group?.workflow?.unsubscribeExecution) === "manual";
+}
+
 function getGroupUnsubscribeAvailability(group) {
   if (hasResolvedAutomaticUnsubscribe(group) || group?.workflow?.manualHandledLocally) {
     return {
@@ -1402,7 +1406,20 @@ function getGroupUnsubscribeAvailability(group) {
     };
   }
 
-  return getGroupUnsubscribePath(group);
+  const discoveredPath = getGroupUnsubscribePath(group);
+
+  if (hasAutomaticUnsubscribeResolvedToManual(group)) {
+    const manualCount = Math.max(discoveredPath.manualCount, 1);
+
+    return {
+      available: true,
+      automaticCount: 0,
+      executable: false,
+      manualCount,
+    };
+  }
+
+  return discoveredPath;
 }
 
 function hasExecutableUnsubscribeAction(group) {
@@ -1410,9 +1427,9 @@ function hasExecutableUnsubscribeAction(group) {
 }
 
 function hasManualUnsubscribePath(group) {
-  const unsubscribePath = getGroupUnsubscribePath(group);
+  const unsubscribeAvailability = getGroupUnsubscribeAvailability(group);
 
-  return unsubscribePath.automaticCount === 0 && unsubscribePath.manualCount > 0;
+  return unsubscribeAvailability.automaticCount === 0 && unsubscribeAvailability.manualCount > 0;
 }
 
 function hasManualOnlyUnsubscribeAction(group) {
