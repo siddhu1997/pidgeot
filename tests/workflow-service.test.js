@@ -707,7 +707,12 @@ describe("workflow service", () => {
         type: "MAILTO",
       }),
     ]);
-    expect(manualGroup.workflow.manualUnsubscribeOperations[0].mailto).not.toHaveProperty("body");
+    expect(manualGroup.workflow.manualUnsubscribeOperations[0].mailto).toEqual({
+      body: null,
+      href: "mailto:leave@example.com",
+      recipient: "leave@example.com",
+      subject: null,
+    });
 
     expect(pageGroup.workflow.unsubscribeOperationsAvailable).toBe(false);
     expect(pageGroup.workflow.unsubscribeAutomaticOperationCount).toBe(0);

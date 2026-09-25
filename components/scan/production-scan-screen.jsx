@@ -21,6 +21,7 @@ import {
   formatLabel,
   getGroupTitle,
   getUnsubscribeLabel,
+  RITUAL_STAGES,
 } from "@/components/scan/production-scan-model";
 import { ManualUnsubscribeWizard } from "@/components/scan/manual-unsubscribe-wizard";
 import {
@@ -1052,23 +1053,108 @@ function shouldShowUnsubscribeSeverSurface({ armedActionType, execution, group }
     || outcome === "manual";
 }
 
+const PORTALLED_TOOLTIP_WIDTH = 224;
+const PORTALLED_TOOLTIP_CLASSNAME = "pointer-events-none fixed z-[90] w-56 rounded-2xl border border-white/12 bg-[rgba(7,11,19,0.96)] px-3 py-2 text-xs leading-5 text-slate-200 shadow-[0_18px_40px_rgba(0,0,0,0.32)]";
+
+function getPortalledTooltipPosition(trigger, tooltip) {
+  const rect = trigger.getBoundingClientRect();
+  const tooltipHeight = tooltip?.getBoundingClientRect().height || 88;
+  const left = Math.min(Math.max(8, rect.left), window.innerWidth - PORTALLED_TOOLTIP_WIDTH - 8);
+  const preferAbove = rect.top >= tooltipHeight + 12;
+  const top = preferAbove
+    ? rect.top - tooltipHeight - 8
+    : rect.bottom + 8;
+
+  return {
+    left,
+    top: Math.min(Math.max(8, top), window.innerHeight - tooltipHeight - 8),
+  };
+}
+
 function TooltipTag({ children, className, description }) {
-  return (
-    <span className="group/tooltip relative inline-flex">
+  const triggerRef = useRef(null);
+  const tooltipRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState({ left: 0, top: 0 });
+
+  function updatePosition() {
+    if (!triggerRef.current) {
+      return;
+    }
+
+    setPosition(getPortalledTooltipPosition(triggerRef.current, tooltipRef.current));
+  }
+
+  function showTip() {
+    if (!description) {
+      return;
+    }
+
+    updatePosition();
+    setOpen(true);
+  }
+
+  function hideTip() {
+    setOpen(false);
+  }
+
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    const frameId = window.requestAnimationFrame(updatePosition);
+
+    function handleReposition() {
+      updatePosition();
+    }
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        hideTip();
+      }
+    }
+
+    window.addEventListener("resize", handleReposition);
+    window.addEventListener("scroll", handleReposition, true);
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.removeEventListener("resize", handleReposition);
+      window.removeEventListener("scroll", handleReposition, true);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  const tooltip = open && description && typeof document !== "undefined"
+    ? createPortal(
       <span
+        ref={tooltipRef}
+        className={PORTALLED_TOOLTIP_CLASSNAME}
+        role="tooltip"
+        style={{ left: position.left, top: position.top }}
+      >
+        {description}
+      </span>,
+      document.body,
+    )
+    : null;
+
+  return (
+    <span className="inline-flex">
+      <span
+        ref={triggerRef}
         className={className}
+        onBlur={hideTip}
+        onFocus={showTip}
+        onMouseEnter={showTip}
+        onMouseLeave={hideTip}
         tabIndex={description ? 0 : undefined}
       >
         {children}
       </span>
-      {description ? (
-        <span
-          className="pointer-events-none absolute left-0 top-[calc(100%+0.5rem)] z-20 w-56 rounded-2xl border border-white/12 bg-[rgba(7,11,19,0.96)] px-3 py-2 text-xs leading-5 text-slate-200 opacity-0 shadow-[0_18px_40px_rgba(0,0,0,0.32)] transition-opacity duration-150 group-hover/tooltip:opacity-100 group-focus-within/tooltip:opacity-100"
-          role="tooltip"
-        >
-          {description}
-        </span>
-      ) : null}
+      {tooltip}
     </span>
   );
 }
@@ -1581,17 +1667,8 @@ function BulkSelectionControls({ allVisibleSelected, disabled, onClearAll, onSel
   );
 }
 
-const FILTER_TOOLTIP_WIDTH = 224;
-
 function getFilterTooltipPosition(trigger) {
-  const rect = trigger.getBoundingClientRect();
-  const left = Math.min(Math.max(8, rect.left), window.innerWidth - FILTER_TOOLTIP_WIDTH - 8);
-  const estimatedHeight = 88;
-  const top = window.innerHeight - rect.bottom < estimatedHeight + 12 && rect.top > estimatedHeight + 12
-    ? rect.top - estimatedHeight - 8
-    : rect.bottom + 8;
-
-  return { left, top };
+  return getPortalledTooltipPosition(trigger);
 }
 
 function FilterInfoTip({ description }) {
@@ -1619,7 +1696,7 @@ function FilterInfoTip({ description }) {
   const tooltip = open && typeof document !== "undefined"
     ? createPortal(
       <span
-        className="pointer-events-none fixed z-[90] w-56 rounded-2xl border border-white/12 bg-[rgba(7,11,19,0.96)] px-3 py-2 text-xs leading-5 text-slate-200 shadow-[0_18px_40px_rgba(0,0,0,0.32)]"
+        className={PORTALLED_TOOLTIP_CLASSNAME}
         role="tooltip"
         style={{ left: position.left, top: position.top }}
       >
@@ -1862,14 +1939,39 @@ function FilterMenu({
   );
 }
 
-function ManualUnsubscribeInfoCard({ disabled, label, onOpenManualDetails }) {
+function ManualUnsubscribeInfoCard({ disabled, emphasized = false, label, onOpenManualDetails, reducedMotion }) {
+  const showEmphasis = emphasized && !disabled;
+
   return (
-    <div className="flex min-h-[72px] min-w-[220px] flex-1 flex-col items-start justify-center rounded-[22px] border border-white/12 bg-[rgba(7,11,19,0.88)] px-4 py-3 text-left">
-      <span className="text-sm font-semibold text-white">Unsubscribe</span>
-      <span className="mt-1 text-xs leading-5 text-slate-400">Manual unsubscribe needed</span>
+    <div
+      className={classNames(
+        "relative isolate flex min-h-[72px] min-w-[220px] flex-1 flex-col items-start justify-center overflow-hidden rounded-[22px] border px-4 py-3 text-left",
+        disabled
+          ? "border-white/8 bg-black/20"
+          : "border-white/12 bg-[rgba(7,11,19,0.88)]",
+        showEmphasis
+          ? "border-cyan-200/40 shadow-[0_0_0_1px_rgba(186,230,253,0.16),inset_0_1px_0_rgba(255,255,255,0.14),0_12px_28px_rgba(56,189,248,0.1)]"
+          : null,
+      )}
+    >
+      {showEmphasis ? (
+        <span aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden rounded-[21px]">
+          <span className="absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-white/40 to-transparent" />
+          <span className="absolute inset-0 bg-[linear-gradient(115deg,transparent_18%,rgba(255,255,255,0.06)_46%,transparent_62%)]" />
+          {reducedMotion ? null : (
+            <motion.span
+              className="absolute top-[-40%] h-[180%] w-14 -skew-x-12 bg-gradient-to-r from-transparent via-cyan-100/18 to-transparent"
+              animate={{ left: ["-35%", "120%"] }}
+              transition={{ duration: 4.2, ease: "easeInOut", repeat: Infinity, repeatDelay: 1.6 }}
+            />
+          )}
+        </span>
+      ) : null}
+      <span className="relative text-sm font-semibold text-white">Unsubscribe</span>
+      <span className="relative mt-1 text-xs leading-5 text-slate-400">Manual unsubscribe needed</span>
       <button
         className={classNames(
-          "mt-2 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors duration-200",
+          "relative mt-2 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors duration-200",
           disabled
             ? "cursor-not-allowed border-white/8 bg-black/18 text-slate-500"
             : "border-white/16 bg-white/6 text-white hover:border-white/28 hover:bg-white/10",
@@ -1891,14 +1993,11 @@ function getRecommendedSelectionAction(actionSummary, recovery = null) {
     || recovery?.kind === "usage_limit"
     || recovery?.kind === "failed"
     || recovery?.kind === "failed_permanent"
-    || recovery?.kind === "unsafe"
-    || recovery?.kind === "manual";
+    || recovery?.kind === "unsafe";
+  const hasAutomaticUnsubscribe = Boolean(actionSummary?.unsubscribe?.enabled);
+  const hasManualUnsubscribe = (actionSummary?.unsubscribe?.manualGroupCount || 0) > 0;
 
-  if (unsubscribeBlocked) {
-    return actionSummary?.cleanup?.enabled ? "cleanup" : null;
-  }
-
-  if (actionSummary?.unsubscribe?.enabled) {
+  if (!unsubscribeBlocked && (hasAutomaticUnsubscribe || hasManualUnsubscribe)) {
     return "unsubscribe";
   }
 
@@ -2079,10 +2178,12 @@ function SelectionActionBar({
         {manualOnlyUnsubscribe ? (
           <ManualUnsubscribeInfoCard
             disabled={actionLocked}
+            emphasized={recommendedAction === "unsubscribe"}
             label={actionSummary.unsubscribe.manualGroupCount >= 2
               ? "Run manual unsubscribe wizard"
               : "View instructions"}
             onOpenManualDetails={onOpenManualDetails}
+            reducedMotion={reducedMotion}
           />
         ) : (
           <SelectionActionButton
@@ -2207,6 +2308,62 @@ function getActionButtonLabel({ actionLabel, pausing, requestState }) {
   }
 
   return actionLabel;
+}
+
+const FIRST_SCAN_INBOX_BUTTON_CLASSNAME = "relative z-10 rounded-2xl bg-cyan-300 px-5 py-3 text-sm font-semibold text-slate-950 shadow-[0_12px_26px_rgba(0,0,0,0.18)] transition-transform duration-200 hover:-translate-y-0.5 disabled:translate-y-0 disabled:opacity-80";
+const FIRST_SCAN_SONAR_CYCLE_SECONDS = 2.35;
+
+function FirstScanInboxButton({ disabled, label, onClick, reducedMotion }) {
+  const [pulseStopped, setPulseStopped] = useState(false);
+  const idlePulse = !reducedMotion && !disabled && !pulseStopped;
+
+  function stopIdlePulse() {
+    setPulseStopped(true);
+  }
+
+  return (
+    <span className="relative isolate inline-flex overflow-visible">
+      {idlePulse ? [0, 1, 2].map((index) => (
+        <motion.span
+          key={index}
+          aria-hidden
+          className="pointer-events-none absolute inset-0 z-0 rounded-2xl border border-cyan-100/60 shadow-[0_0_22px_rgba(165,243,252,0.16)]"
+          initial={{ opacity: 0.7, scale: 1 }}
+          animate={{ opacity: 0, scale: 1.72 }}
+          transition={{
+            delay: index * 0.28,
+            duration: 1.32,
+            ease: [0.16, 1, 0.3, 1],
+            repeat: Infinity,
+            repeatDelay: FIRST_SCAN_SONAR_CYCLE_SECONDS - 1.32,
+          }}
+        />
+      )) : null}
+      <motion.button
+        animate={idlePulse
+          ? { scale: [1, 1.016, 1, 1] }
+          : { scale: 1 }}
+        className={FIRST_SCAN_INBOX_BUTTON_CLASSNAME}
+        disabled={disabled}
+        onClick={() => {
+          stopIdlePulse();
+          onClick?.();
+        }}
+        onPointerDown={stopIdlePulse}
+        transition={idlePulse
+          ? {
+              duration: FIRST_SCAN_SONAR_CYCLE_SECONDS,
+              ease: "easeOut",
+              repeat: Infinity,
+              times: [0, 0.07, 0.16, 1],
+            }
+          : { duration: 0.16 }}
+        type="button"
+      >
+        {label}
+      </motion.button>
+    </span>
+  );
 }
 
 function DiscoveryFact({ children }) {
@@ -2405,40 +2562,104 @@ function ScanLens({ mode, reducedMotion }) {
   );
 }
 
-function RitualStageRail({ reducedMotion, scan, settled }) {
-  const currentStage = deriveRitualStage(scan);
-  const stages = ["DISCOVERING", "GROUPING", "CLASSIFYING", "READY"];
-  const currentIndex = currentStage ? stages.indexOf(currentStage) : -1;
+const SCAN_ACTIVITY_PHRASES = {
+  [RITUAL_STAGES.DISCOVERING]: [
+    "Finding the repeat offenders...",
+    "Following the inbox signal...",
+    "Looking for familiar faces...",
+    "Pulling the useful threads together...",
+  ],
+  [RITUAL_STAGES.GROUPING]: [
+    "Getting familiar senders together...",
+    "Connecting the recurring threads...",
+    "Figuring out who keeps showing up...",
+    "Untangling the sender crowd...",
+  ],
+  [RITUAL_STAGES.CLASSIFYING]: [
+    "Reading the patterns...",
+    "Separating signal from noise...",
+    "Working out what belongs where...",
+    "Looking for the useful clues...",
+  ],
+};
 
-  if (currentIndex === -1) {
+function TinkeringGlyph({ reducedMotion }) {
+  return (
+    <motion.span
+      aria-hidden
+      className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center text-cyan-200"
+      animate={reducedMotion
+        ? { rotate: 0, scale: 1 }
+        : { rotate: [0, 18, -8, 32, 6, 0], scale: [1, 1.14, 0.94, 1.1, 1] }}
+      transition={reducedMotion
+        ? { duration: 0 }
+        : { duration: 1.7, ease: "easeInOut", repeat: Infinity }}
+    >
+      <svg fill="currentColor" viewBox="0 0 16 16">
+        <path d="M8 1.2 8.7 6.1 13.8 5.2 10 8l3.8 2.8-5.1-.9L8 14.8l-.7-4.9-5.1.9L6 8 2.2 5.2l5.1.9Z" />
+      </svg>
+    </motion.span>
+  );
+}
+
+function ActiveScanLiveStatus({ phrases, reducedMotion, stageLabel }) {
+  const [phraseIndex, setPhraseIndex] = useState(0);
+
+  useEffect(() => {
+    if (reducedMotion || phrases.length < 2) {
+      return undefined;
+    }
+
+    const timeoutId = window.setInterval(() => {
+      setPhraseIndex((current) => (current + 1) % phrases.length);
+    }, 3200);
+
+    return () => {
+      window.clearInterval(timeoutId);
+    };
+  }, [phrases, reducedMotion]);
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-slate-500">Status</span>
+      <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-cyan-100">{stageLabel}</span>
+      <span className="inline-flex min-h-5 min-w-0 items-center gap-2 text-sm text-slate-300">
+        <TinkeringGlyph reducedMotion={reducedMotion} />
+        <span>{phrases[phraseIndex] || phrases[0]}</span>
+      </span>
+    </div>
+  );
+}
+
+function ScanLiveStatus({ reducedMotion, scan }) {
+  const stage = deriveRitualStage(scan);
+
+  if (!stage) {
+    return null;
+  }
+
+  if (stage === RITUAL_STAGES.READY) {
+    return (
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-slate-500">Status</span>
+        <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-cyan-100/80">Ready</span>
+      </div>
+    );
+  }
+
+  const phrases = SCAN_ACTIVITY_PHRASES[stage];
+
+  if (!phrases) {
     return null;
   }
 
   return (
-    <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-      {stages.map((stage, index) => {
-        const active = index === currentIndex;
-        const complete = index < currentIndex;
-
-        return (
-          <motion.span
-            key={stage}
-            className={classNames(
-              "flex min-h-[52px] items-center justify-center rounded-2xl border px-4 py-3 text-center font-mono text-[10px] uppercase tracking-[0.22em]",
-              active
-                ? "border-cyan-300/28 bg-cyan-300/12 text-cyan-100 shadow-[0_0_0_1px_rgba(56,189,248,0.08)]"
-                : complete
-                  ? "border-white/12 bg-white/8 text-slate-200"
-                  : "border-white/8 bg-black/16 text-slate-500",
-            )}
-            animate={reducedMotion || settled ? undefined : active ? { y: [0, -2, 0] } : { y: 0 }}
-            transition={reducedMotion || settled ? undefined : active ? { duration: 2.8, repeat: Infinity, ease: "easeInOut" } : undefined}
-          >
-            {formatLabel(stage)}
-          </motion.span>
-        );
-      })}
-    </div>
+    <ActiveScanLiveStatus
+      key={stage}
+      phrases={phrases}
+      reducedMotion={reducedMotion}
+      stageLabel={formatLabel(stage)}
+    />
   );
 }
 
@@ -3569,7 +3790,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
               <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-300">{effectivePresentation.body}</p>
             </div>
 
-            <RitualStageRail reducedMotion={reducedMotion} scan={scan} settled={pausing} />
+            <ScanLiveStatus reducedMotion={reducedMotion} scan={scan} />
 
             {discoveryFacts.length > 0 || automaticUnsubscribeCount > 0 || manualUnsubscribeCount > 0 ? (
               <div className="flex flex-wrap gap-2">
@@ -3592,48 +3813,6 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
                 ) : null}
               </div>
             ) : null}
-
-            <div className="flex flex-wrap gap-3">
-              {effectivePresentation.actionLabel && !hideSessionRecoveryHeaderAction ? (
-                <button
-                  className={classNames(
-                    "rounded-2xl px-5 py-3 text-sm font-semibold shadow-[0_12px_26px_rgba(0,0,0,0.18)] transition-transform duration-200 hover:-translate-y-0.5 disabled:translate-y-0 disabled:opacity-80",
-                    effectivePresentation.accent === "yellow"
-                      ? "bg-[#f4c95d] text-slate-950"
-                      : effectivePresentation.accent === "emerald"
-                        ? "bg-emerald-300 text-slate-950"
-                        : "bg-cyan-300 text-slate-950",
-                  )}
-                    disabled={primaryActionDisabled}
-                  onClick={() => handleScanAction(effectivePresentation.actionType)}
-                  type="button"
-                >
-                    {getActionButtonLabel({
-                      actionLabel: effectivePresentation.actionLabel,
-                      pausing,
-                      requestState,
-                    })}
-                </button>
-              ) : null}
-              <button
-                className="rounded-2xl border border-white/12 bg-white/4 px-5 py-3 text-sm font-semibold text-white transition-colors duration-200 hover:border-white/24 hover:bg-white/8 disabled:opacity-80"
-                disabled={requestState !== "idle"}
-                onClick={refreshStatus}
-                type="button"
-              >
-                Refresh status
-              </button>
-              <Link className="rounded-2xl border border-white/12 bg-white/4 px-5 py-3 text-sm font-semibold text-white transition-colors duration-200 hover:border-white/24 hover:bg-white/8" href="/privacy">Privacy posture</Link>
-              {postScanCompactEligible ? (
-                <button
-                  className="rounded-2xl border border-white/12 bg-white/4 px-5 py-3 text-sm font-semibold text-white transition-colors duration-200 hover:border-white/24 hover:bg-white/8"
-                  onClick={() => setScanDetailsExpanded(false)}
-                  type="button"
-                >
-                  Hide scan details
-                </button>
-              ) : null}
-            </div>
 
             <AnimatePresence initial={false}>
               {errorMessage ? (
@@ -3670,6 +3849,65 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
             scan={scan}
             senderGroups={senderGroups}
           />
+
+          <div className="flex flex-wrap items-center justify-between gap-3 xl:col-span-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-3 py-1">
+              {effectivePresentation.actionLabel && !hideSessionRecoveryHeaderAction ? (
+                !scan && effectivePresentation.actionType === "start" ? (
+                  <FirstScanInboxButton
+                    disabled={primaryActionDisabled}
+                    label={getActionButtonLabel({
+                      actionLabel: effectivePresentation.actionLabel,
+                      pausing,
+                      requestState,
+                    })}
+                    onClick={() => handleScanAction(effectivePresentation.actionType)}
+                    reducedMotion={reducedMotion}
+                  />
+                ) : (
+                  <button
+                    className={classNames(
+                      "rounded-2xl px-5 py-3 text-sm font-semibold shadow-[0_12px_26px_rgba(0,0,0,0.18)] transition-transform duration-200 hover:-translate-y-0.5 disabled:translate-y-0 disabled:opacity-80",
+                      effectivePresentation.accent === "yellow"
+                        ? "bg-[#f4c95d] text-slate-950"
+                        : effectivePresentation.accent === "emerald"
+                          ? "bg-emerald-300 text-slate-950"
+                          : "bg-cyan-300 text-slate-950",
+                    )}
+                    disabled={primaryActionDisabled}
+                    onClick={() => handleScanAction(effectivePresentation.actionType)}
+                    type="button"
+                  >
+                    {getActionButtonLabel({
+                      actionLabel: effectivePresentation.actionLabel,
+                      pausing,
+                      requestState,
+                    })}
+                  </button>
+                )
+              ) : null}
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-3">
+              <button
+                className="rounded-2xl border border-white/12 bg-white/4 px-5 py-3 text-sm font-semibold text-white transition-colors duration-200 hover:border-white/24 hover:bg-white/8 disabled:opacity-80"
+                disabled={requestState !== "idle"}
+                onClick={refreshStatus}
+                type="button"
+              >
+                Refresh status
+              </button>
+              <Link className="rounded-2xl border border-white/12 bg-white/4 px-5 py-3 text-sm font-semibold text-white transition-colors duration-200 hover:border-white/24 hover:bg-white/8" href="/privacy">Privacy posture</Link>
+              {postScanCompactEligible ? (
+                <button
+                  className="rounded-2xl border border-white/12 bg-white/4 px-5 py-3 text-sm font-semibold text-white transition-colors duration-200 hover:border-white/24 hover:bg-white/8"
+                  onClick={() => setScanDetailsExpanded(false)}
+                  type="button"
+                >
+                  Hide scan details
+                </button>
+              ) : null}
+            </div>
+          </div>
         </div>
       </section>
       )}

@@ -56,6 +56,224 @@ function getManualUnsubscribeOperations(group) {
   return Array.isArray(group?.manualUnsubscribeOperations) ? group.manualUnsubscribeOperations : [];
 }
 
+function canonicalizeMailtoField(value) {
+  return typeof value === "string" ? value.replace(/\s+/g, " ").trim().toLowerCase() : "";
+}
+
+function getMailtoPresentationKey(operation) {
+  return [
+    canonicalizeMailtoField(operation?.mailto?.recipient),
+    canonicalizeMailtoField(operation?.mailto?.subject),
+    canonicalizeMailtoField(operation?.mailto?.body),
+  ].join("\u0000");
+}
+
+function presentManualUnsubscribeOperations(operations) {
+  const presented = [];
+  const mailtoIndexByKey = new Map();
+
+  for (const operation of operations) {
+    if (operation?.type !== "MAILTO") {
+      presented.push({ messageCount: 1, operation });
+      continue;
+    }
+
+    const key = getMailtoPresentationKey(operation);
+    const existingIndex = mailtoIndexByKey.get(key);
+
+    if (existingIndex == null) {
+      mailtoIndexByKey.set(key, presented.length);
+      presented.push({ messageCount: 1, operation });
+      continue;
+    }
+
+    presented[existingIndex].messageCount += 1;
+  }
+
+  return presented;
+}
+
+function formatMailtoFoundInMessages(messageCount) {
+  if (!Number.isFinite(messageCount) || messageCount < 2) {
+    return null;
+  }
+
+  return `Found in ${formatCount(messageCount)} messages`;
+}
+
+function CopyFieldButton({ disabled, label, text }) {
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        window.clearTimeout(timerRef.current);
+      }
+    };
+  }, []);
+
+  async function handleCopy() {
+    if (disabled || typeof text !== "string" || !text) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      return;
+    }
+
+    setCopied(true);
+
+    if (timerRef.current) {
+      window.clearTimeout(timerRef.current);
+    }
+
+    timerRef.current = window.setTimeout(() => {
+      setCopied(false);
+    }, 1400);
+  }
+
+  return (
+    <button
+      className={classNames(
+        "shrink-0 rounded-xl border px-2.5 py-1 text-xs font-semibold transition-colors duration-200",
+        disabled
+          ? "cursor-not-allowed border-white/8 text-slate-500"
+          : "border-white/12 text-slate-200 hover:border-white/24 hover:bg-white/8",
+      )}
+      disabled={disabled}
+      onClick={handleCopy}
+      type="button"
+    >
+      {copied ? "Copied" : label}
+    </button>
+  );
+}
+
+function getSafeMailtoHref(href) {
+  return typeof href === "string" && href.toLowerCase().startsWith("mailto:") ? href : null;
+}
+
+function MailtoRecipientLink({ className, href, recipient }) {
+  if (!recipient) {
+    return null;
+  }
+
+  const safeHref = getSafeMailtoHref(href);
+
+  if (!safeHref) {
+    return <p className={classNames(className, "text-slate-300")}>{recipient}</p>;
+  }
+
+  return (
+    <a
+      className={classNames(className, "text-cyan-100 underline underline-offset-2 hover:text-cyan-50")}
+      href={safeHref}
+    >
+      {recipient}
+    </a>
+  );
+}
+
+function MailtoUnsubscribeModal({ onClose, operation, reducedMotion }) {
+  const recipient = operation?.mailto?.recipient || null;
+  const subject = operation?.mailto?.subject || null;
+  const body = operation?.mailto?.body || null;
+  const href = getSafeMailtoHref(operation?.mailto?.href);
+
+  return (
+    <AnimatePresence>
+      <motion.div
+        key="mailto-unsubscribe-backdrop"
+        aria-hidden="true"
+        className="fixed inset-0 z-[60] bg-[rgba(2,6,12,0.62)] backdrop-blur-[2px]"
+        initial={reducedMotion ? false : { opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={reducedMotion ? undefined : { opacity: 0 }}
+        onClick={onClose}
+      />
+      <motion.section
+        key="mailto-unsubscribe-dialog"
+        aria-labelledby="mailto-unsubscribe-title"
+        aria-modal="true"
+        className="fixed left-1/2 top-1/2 z-[61] w-[min(460px,calc(100vw-2rem))] min-w-0 -translate-x-1/2 -translate-y-1/2 overflow-x-hidden rounded-[24px] border border-white/12 bg-[rgba(7,11,19,0.98)] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.38)]"
+        initial={reducedMotion ? false : { opacity: 0, y: 12, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={reducedMotion ? undefined : { opacity: 0, y: 8, scale: 0.98 }}
+        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+        transition={{ duration: reducedMotion ? 0 : 0.18 }}
+      >
+        <h3 id="mailto-unsubscribe-title" className="font-mono text-[10px] uppercase tracking-[0.22em] text-slate-500">
+          Unsubscribe email
+        </h3>
+
+        <div className="mt-4 space-y-3">
+          <div className="min-w-0 overflow-x-hidden rounded-[18px] border border-white/8 bg-[rgba(7,11,19,0.72)] px-3 py-2.5">
+            <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500">To</p>
+            <MailtoRecipientLink
+              className="mt-2 inline-block min-w-0 max-w-full break-all text-sm font-medium"
+              href={href}
+              recipient={recipient}
+            />
+          </div>
+
+          <div className="min-w-0 overflow-x-hidden rounded-[18px] border border-white/8 bg-[rgba(7,11,19,0.72)] px-3 py-2.5">
+            <div className="flex min-w-0 items-start justify-between gap-3">
+              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500">Subject</p>
+              <CopyFieldButton disabled={!subject} label="Copy subject" text={subject} />
+            </div>
+            <p className={classNames(
+              "mt-2 min-w-0 max-w-full overflow-x-hidden break-words break-all text-sm leading-6",
+              subject ? "text-white" : "text-slate-400",
+            )}
+            >
+              {subject || "No subject was provided by the sender."}
+            </p>
+          </div>
+
+          <div className="min-w-0 overflow-x-hidden rounded-[18px] border border-white/8 bg-[rgba(7,11,19,0.72)] px-3 py-2.5">
+            <div className="flex min-w-0 items-start justify-between gap-3">
+              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500">Message</p>
+              <CopyFieldButton disabled={!body} label="Copy message" text={body} />
+            </div>
+            {body ? (
+              <p className="mt-2 min-w-0 max-w-full overflow-x-hidden whitespace-pre-wrap break-words break-all text-sm leading-6 text-white">
+                {body}
+              </p>
+            ) : (
+              <div className="mt-2 space-y-1 text-xs leading-5 text-slate-500">
+                <p>No message was specified by the sender.</p>
+                <p>This unsubscribe request only provided a recipient and subject.</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-5 flex flex-wrap items-center justify-end gap-2">
+          {href ? (
+            <a
+              className="inline-flex rounded-2xl border border-cyan-300/24 bg-cyan-300/10 px-3 py-2 text-sm font-semibold text-cyan-100 transition-colors duration-200 hover:border-cyan-300/36 hover:bg-cyan-300/16"
+              href={href}
+            >
+              Open email app
+            </a>
+          ) : null}
+          <button
+            className="rounded-2xl border border-white/12 px-3 py-2 text-sm font-semibold text-white transition-colors duration-200 hover:border-white/24 hover:bg-white/8"
+            onClick={onClose}
+            type="button"
+          >
+            Close
+          </button>
+        </div>
+      </motion.section>
+    </AnimatePresence>
+  );
+}
+
 function getCapturedMessages(group) {
   return Array.isArray(group?.capturedMessages) ? group.capturedMessages : [];
 }
@@ -179,11 +397,13 @@ export function ManualUnsubscribeWizard({
   const [reviewFinished, setReviewFinished] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
   const [autoAdvanceSecondsRemaining, setAutoAdvanceSecondsRemaining] = useState(null);
+  const [mailtoModalOperation, setMailtoModalOperation] = useState(null);
   const transitionTimerRef = useRef(null);
   const autoAdvanceTimerRef = useRef(null);
   const autoAdvanceTokenRef = useRef(0);
   const indexRef = useRef(0);
   const totalCountRef = useRef(0);
+  const mailtoModalOperationRef = useRef(null);
 
   const currentGroup = sequence[index] || null;
   const totalCount = sequence.length;
@@ -202,6 +422,7 @@ export function ManualUnsubscribeWizard({
     ? (autoAdvanceSecondsRemaining ?? HANDLED_AUTO_ADVANCE_SECONDS)
     : null;
   const operations = currentGroup ? getManualUnsubscribeOperations(currentGroup) : [];
+  const presentedOperations = presentManualUnsubscribeOperations(operations);
   const capturedMessages = currentGroup ? getCapturedMessages(currentGroup) : [];
   const capturedMailPreviewSummary = getCapturedMailPreviewSummary(capturedMessages.length);
   const capturedMailGroupSummary = currentGroup
@@ -222,7 +443,12 @@ export function ManualUnsubscribeWizard({
     setAutoAdvanceSecondsRemaining(null);
   }, []);
 
+  function closeMailtoModal() {
+    setMailtoModalOperation(null);
+  }
+
   function handleClose() {
+    closeMailtoModal();
     cancelAutoAdvance();
     onClose();
   }
@@ -237,6 +463,7 @@ export function ManualUnsubscribeWizard({
       return;
     }
 
+    setMailtoModalOperation(null);
     setIndex(nextIndex);
 
     if (reducedMotion) {
@@ -280,6 +507,7 @@ export function ManualUnsubscribeWizard({
       return next;
     });
     onMarkHandled?.(currentGroup);
+    closeMailtoModal();
 
     if (isWizard) {
       advanceFromCurrent();
@@ -296,9 +524,19 @@ export function ManualUnsubscribeWizard({
   }, []);
 
   useEffect(() => {
+    mailtoModalOperationRef.current = mailtoModalOperation;
+  }, [mailtoModalOperation]);
+
+  useEffect(() => {
     function handleKeyDown(event) {
       if (event.key === "Escape") {
         event.preventDefault();
+
+        if (mailtoModalOperationRef.current) {
+          setMailtoModalOperation(null);
+          return;
+        }
+
         cancelAutoAdvance();
         onClose();
       }
@@ -377,6 +615,7 @@ export function ManualUnsubscribeWizard({
     }
 
     setSkippedIds((current) => new Set(current).add(currentId));
+    closeMailtoModal();
 
     if (index < totalCount - 1) {
       goToIndex(index + 1);
@@ -528,29 +767,49 @@ export function ManualUnsubscribeWizard({
                   </div>
 
                   <div className="grid min-w-0 gap-3">
-                    {operations.length > 0 ? operations.map((operation) => (
-                      <div key={operation.id} className="min-w-0 overflow-hidden rounded-[20px] border border-white/10 bg-white/5 p-3">
-                        <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500">Unsubscribe method</p>
-                        <p className="mt-1 font-medium text-white">{formatManualUnsubscribeMethod(operation)}</p>
-                        {operation.mailto?.recipient ? (
-                          <p className="mt-2 min-w-0 truncate text-sm text-slate-300">{operation.mailto.recipient}</p>
-                        ) : null}
-                        {operation.host ? (
-                          <p className="mt-2 min-w-0 break-all text-sm text-slate-300">{`${operation.host}${operation.path || ""}`}</p>
-                        ) : null}
-                        <p className="mt-2 text-xs leading-5 text-slate-400">{getManualUnsubscribeReason(operation)}</p>
-                        {operation.type === "HTTPS_LINK" && operation.target ? (
-                          <a
-                            className="mt-3 inline-flex rounded-2xl border border-cyan-300/24 bg-cyan-300/10 px-3 py-2 text-sm font-semibold text-cyan-100 transition-colors duration-200 hover:border-cyan-300/36 hover:bg-cyan-300/16"
-                            href={operation.target}
-                            rel="noreferrer"
-                            target="_blank"
-                          >
-                            Open unsubscribe page
-                          </a>
-                        ) : null}
-                      </div>
-                    )) : (
+                    {presentedOperations.length > 0 ? presentedOperations.map(({ messageCount, operation }, operationIndex) => {
+                      const foundInMessages = formatMailtoFoundInMessages(messageCount);
+
+                      return (
+                        <div key={`${operation.id}:${operationIndex}`} className="min-w-0 overflow-hidden rounded-[20px] border border-white/10 bg-white/5 p-3">
+                          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500">Unsubscribe method</p>
+                          <p className="mt-1 font-medium text-white">{formatManualUnsubscribeMethod(operation)}</p>
+                          {operation.mailto?.recipient ? (
+                            <MailtoRecipientLink
+                              className="mt-2 block min-w-0 truncate text-sm"
+                              href={getSafeMailtoHref(operation.mailto.href)}
+                              recipient={operation.mailto.recipient}
+                            />
+                          ) : null}
+                          {foundInMessages ? (
+                            <p className="mt-1 text-xs text-slate-500">{foundInMessages}</p>
+                          ) : null}
+                          {operation.host ? (
+                            <p className="mt-2 min-w-0 break-all text-sm text-slate-300">{`${operation.host}${operation.path || ""}`}</p>
+                          ) : null}
+                          <p className="mt-2 text-xs leading-5 text-slate-400">{getManualUnsubscribeReason(operation)}</p>
+                          {operation.type === "MAILTO" ? (
+                            <button
+                              className="mt-3 inline-flex rounded-2xl border border-cyan-300/24 bg-cyan-300/10 px-3 py-2 text-sm font-semibold text-cyan-100 transition-colors duration-200 hover:border-cyan-300/36 hover:bg-cyan-300/16"
+                              onClick={() => setMailtoModalOperation(operation)}
+                              type="button"
+                            >
+                              View instructions
+                            </button>
+                          ) : null}
+                          {operation.type === "HTTPS_LINK" && operation.target ? (
+                            <a
+                              className="mt-3 inline-flex rounded-2xl border border-cyan-300/24 bg-cyan-300/10 px-3 py-2 text-sm font-semibold text-cyan-100 transition-colors duration-200 hover:border-cyan-300/36 hover:bg-cyan-300/16"
+                              href={operation.target}
+                              rel="noreferrer"
+                              target="_blank"
+                            >
+                              Open unsubscribe page
+                            </a>
+                          ) : null}
+                        </div>
+                      );
+                    }) : (
                       <p className="text-sm text-slate-400">No safe unsubscribe details are available for this sender in the current scan.</p>
                     )}
                   </div>
@@ -625,6 +884,13 @@ export function ManualUnsubscribeWizard({
           </div>
         )}
       </motion.section>
+      {mailtoModalOperation ? (
+        <MailtoUnsubscribeModal
+          onClose={closeMailtoModal}
+          operation={mailtoModalOperation}
+          reducedMotion={reducedMotion}
+        />
+      ) : null}
     </AnimatePresence>
   );
 }
