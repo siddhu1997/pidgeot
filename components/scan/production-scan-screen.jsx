@@ -522,11 +522,11 @@ function hasCompletedUnsubscribeAction(group) {
     unsubscribeExecution.state === WORKFLOW_EXECUTION_STATES.PARTIAL_SUCCESS
   );
 
-  if (automaticExecutionCompleted) {
+  if (automaticExecutionCompleted || group?.workflow?.manualHandledLocally) {
     return true;
   }
 
-  return Boolean(group?.workflow?.unsubscribeHandledLocally) && !group?.workflow?.manualHandledLocally;
+  return Boolean(group?.workflow?.unsubscribeHandledLocally);
 }
 
 function hasSuccessfulUnsubscribeSimulation(group, execution) {
@@ -832,6 +832,10 @@ function getActionabilityLabel(group, selected) {
 
   if (isGroupActionable(group)) {
     return "Cleanup candidate";
+  }
+
+  if (hasCompletedCleanupAction(group) || hasCompletedUnsubscribeAction(group)) {
+    return "Handled";
   }
 
   return "Discovery only";
