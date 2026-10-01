@@ -1,5 +1,10 @@
 import Link from "next/link";
 
+import { ProductionAppNav } from "@/components/app/production-app-nav";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 export const metadata = {
   title: "Security | Pidgeot",
   description: "How Pidgeot handles Google sign-in, Gmail access, and unsubscribe requests.",
@@ -22,7 +27,9 @@ const securityAreas = [
 
 export default function SecurityPage() {
   return (
-    <main className="machine-shell flex-1 px-5 py-8 sm:px-8">
+    <>
+      <ProductionAppNav />
+      <main className="machine-shell flex-1 px-5 py-8 sm:px-8">
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 rounded-[28px] border border-white/12 bg-[rgba(7,11,19,0.84)] p-6 md:p-8">
         <div className="space-y-3">
           <p className="font-mono text-xs uppercase tracking-[0.28em] text-slate-400">
@@ -53,6 +60,7 @@ export default function SecurityPage() {
           Back to Pidgeot
         </Link>
       </div>
-    </main>
+      </main>
+    </>
   );
 }

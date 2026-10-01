@@ -1,10 +1,13 @@
 import Link from "next/link";
 
+import { ProductionAppNav } from "@/components/app/production-app-nav";
+
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export const metadata = {
   title: "Privacy policy | Pidgeot",
-  description: "How Pidgeot accesses Gmail metadata, handles OAuth tokens, and processes unsubscribe requests.",
+  description: "How Pidgeot accesses Gmail metadata, shares data, retains sessions, and does not use AI/ML.",
 };
 
 const sections = [
@@ -19,7 +22,7 @@ const sections = [
     title: "Information accessed",
     body: [
       "Pidgeot uses Google sign-in to learn the verified account email needed to create your session.",
-      "After you separately connect Gmail, Pidgeot reads Gmail message metadata only. The headers used for analysis are From, To, Subject, Date, List-Unsubscribe, List-Unsubscribe-Post, List-ID, Precedence, Reply-To, and Sender.",
+      "After you separately connect Gmail, Pidgeot reads Gmail message metadata through the Gmail API. The headers used for analysis are From, To, Subject, Date, List-Unsubscribe, List-Unsubscribe-Post, List-ID, Precedence, Reply-To, and Sender.",
       "Pidgeot does not fetch message bodies, snippets, or attachments.",
     ],
   },
@@ -28,54 +31,51 @@ const sections = [
     body: [
       "Sign-in requests the OpenID scopes openid and email.",
       "Gmail access is a second, explicit step. That step requests https://www.googleapis.com/auth/gmail.modify so Pidgeot can scan your Gmail metadata and move unread messages you select to Gmail Trash.",
-      "Moving mail to Trash is not permanent deletion. Gmail keeps trashed messages according to Gmail’s own Trash rules.",
+      "Moving mail to Gmail Trash is not permanent deletion. Trashed messages remain in Gmail and are governed by Gmail’s own retention and deletion rules. Pidgeot cannot erase Gmail messages from Google’s systems.",
     ],
   },
   {
     title: "Why this data is used",
     body: [
       "Metadata is used to group recurring senders, show you what Pidgeot found, and let you choose keep, unsubscribe, or Trash cleanup.",
-      "Pidgeot does not decide on your behalf. Classification uses local rules on the server. It does not send mailbox data to an external AI or LLM service.",
+      "Pidgeot does not decide on your behalf.",
     ],
   },
   {
-    title: "Unsubscribe processing",
+    title: "How Google user data is shared, transferred, or disclosed",
     body: [
-      "If you ask Pidgeot to unsubscribe, it may submit a request using the unsubscribe mechanism advertised on the email, such as a standard one-click HTTPS request.",
-      "Those one-click requests are sent from Pidgeot’s server. The destination is the unsubscribe address from the email, not an address supplied by your browser.",
-      "The destination receives the request that mechanism requires. Pidgeot does not send Gmail message bodies to unsubscribe endpoints.",
-      "If only a manual or mailto instruction is available, you remain in control of that step.",
-      "A submitted unsubscribe request does not guarantee that a sender will stop sending mail.",
+      "Google receives the OAuth and Gmail API requests needed to authenticate you and provide Gmail functionality: sign-in, connecting Gmail, listing and reading the message metadata required for scanning, grouping, and classification, and moving unread messages you select to Gmail Trash.",
+      "When you explicitly run an automatic unsubscribe, Pidgeot sends that unsubscribe request from its server to the unsubscribe endpoint advertised on the email, typically a standard one-click HTTPS request. That unsubscribe endpoint is an external recipient of that specific request. Pidgeot does not send your general mailbox contents, attachments, message bodies, or unrelated Gmail data to unsubscribe endpoints.",
+      "If only a manual or mailto instruction is available, you remain in control of that step. A submitted unsubscribe request does not guarantee that a sender will stop sending mail.",
+      "Pidgeot does not sell Google user data.",
+      "Pidgeot does not share Google user data with advertising, analytics, data-broker, error-reporting, or AI/ML providers.",
     ],
   },
   {
-    title: "Token handling",
+    title: "Retention and deletion",
     body: [
-      "OAuth tokens for an active session are held in server process memory so Pidgeot can talk to Google on your behalf during that session.",
-      "Tokens are not persisted to a database, the filesystem, browser localStorage, or analytics systems.",
-      "Pidgeot does not see or store your Google password.",
+      "Pidgeot does not maintain a persistent database of Gmail data and does not retain Gmail message content in persistent storage.",
+      "OAuth tokens are held only in server memory for the active Pidgeot session. They are not stored in a database, the filesystem, cookies, or browser storage. Pidgeot does not see or store your Google password. The browser cookie identifies the Pidgeot session; it does not contain OAuth tokens.",
+      "Pidgeot sessions expire after 24 hours.",
+      "Scan results, sender groups, workflow state, cleanup progress, and related working data are process-local. They exist only in the memory of the running application process and are not persisted or restored across application restarts. Restarting the application process discards that process-local state.",
+      "Logging out or otherwise ending the Pidgeot session destroys that Pidgeot session and its associated process-local state, including the scan, workflow state, and processing session for that account. Logout ends the Pidgeot session; it does not revoke Google’s OAuth grant and it does not delete Gmail messages.",
+      "Messages moved to Gmail Trash remain governed by Google’s own Gmail retention and deletion rules. Pidgeot does not claim to delete or erase Gmail messages from Google’s systems.",
     ],
   },
   {
-    title: "Retention",
+    title: "AI and machine learning",
     body: [
-      "Pidgeot does not keep a persistent Gmail message database.",
-      "Session, scan, and cleanup state live in the memory of the running application process. That state is discarded when the process restarts.",
-      "Pidgeot does not currently restore cleanup progress across devices or restarts.",
-    ],
-  },
-  {
-    title: "Third parties",
-    body: [
-      "Google receives OAuth and Gmail API requests when you sign in, connect Gmail, scan, or move selected unread mail to Trash.",
-      "If you run an automatic unsubscribe, the unsubscribe destination from the email receives that unsubscribe request.",
-      "Pidgeot does not send Gmail data to advertising, analytics, error-reporting, or external AI providers.",
+      "Pidgeot does not use AI or ML models to process Google user data.",
+      "Pidgeot does not integrate with third-party AI or ML services for Google user data.",
+      "Sender grouping and classification use deterministic application logic on Pidgeot’s server.",
+      "Pidgeot does not send Gmail data to OpenAI, Anthropic, Gemini, or any other AI/ML provider for inference, training, or model improvement.",
+      "Pidgeot does not use Google user data to train or improve generalized or personalized AI/ML models.",
     ],
   },
   {
     title: "Your control",
     body: [
-      "Signing out of Pidgeot ends the Pidgeot session and clears that process-local session. It does not revoke Google’s OAuth grant.",
+      "Logging out of Pidgeot ends the Pidgeot session and clears that process-local session. It does not revoke Google’s OAuth grant.",
       "You can revoke Pidgeot’s Google access from your Google Account permissions. After that, Pidgeot cannot use Gmail until you connect it again.",
     ],
   },
@@ -91,7 +91,9 @@ const sections = [
 
 export default function PrivacyPage() {
   return (
-    <main className="machine-shell flex-1 px-5 py-8 sm:px-8">
+    <>
+      <ProductionAppNav />
+      <main className="machine-shell flex-1 px-5 py-8 sm:px-8">
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 rounded-[28px] border border-white/12 bg-[rgba(7,11,19,0.84)] p-6 md:p-8">
         <div className="space-y-3">
           <p className="font-mono text-xs uppercase tracking-[0.28em] text-slate-400">
@@ -140,6 +142,7 @@ export default function PrivacyPage() {
           </Link>
         </div>
       </div>
-    </main>
+      </main>
+    </>
   );
 }

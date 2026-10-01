@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 
@@ -165,28 +164,14 @@ function PrimaryAction({ action, onReadyAdvance }) {
   );
 }
 
-function SecondaryActions({ email, ready }) {
+function SecondaryActions({ email }) {
+  if (!email) {
+    return null;
+  }
+
   return (
     <div className="flex flex-wrap items-center gap-3 text-sm text-slate-300">
-      <form action="/api/auth/logout" method="post">
-        <button
-          className="rounded-full border border-white/12 bg-white/4 px-4 py-2 font-semibold text-white transition-colors duration-200 hover:border-white/28 hover:bg-white/8 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white"
-          type="submit"
-        >
-          Sign out
-        </button>
-      </form>
-      {email ? <span className="font-mono text-xs uppercase tracking-[0.18em] text-slate-500">{email}</span> : null}
-      {!ready ? (
-        <div className="flex gap-3 text-sm text-slate-400">
-          <Link className="hover:text-white focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white" href="/privacy">
-            Privacy policy
-          </Link>
-          <Link className="hover:text-white focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white" href="/security">
-            Security
-          </Link>
-        </div>
-      ) : null}
+      <span className="font-mono text-xs uppercase tracking-[0.18em] text-slate-500">{email}</span>
     </div>
   );
 }
@@ -234,14 +219,6 @@ export function PidgeotEntryScreen({ authConfigured, email, gmailAuthState }) {
 
           <div className="flex flex-wrap gap-3">
             <PrimaryAction action={flow.primaryAction} onReadyAdvance={() => setEnteredReadyShell(true)} />
-            {!email ? (
-              <Link
-                className="inline-flex items-center justify-center rounded-full border border-white/14 px-5 py-3 text-sm font-semibold text-white transition-colors duration-200 hover:border-white/30 hover:bg-white/6 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white"
-                href="/privacy"
-              >
-                Privacy policy
-              </Link>
-            ) : null}
           </div>
 
           <p className="max-w-2xl text-sm leading-6 text-slate-400">{flow.supportingText}</p>
@@ -252,16 +229,7 @@ export function PidgeotEntryScreen({ authConfigured, email, gmailAuthState }) {
             <span className="rounded-full border border-white/10 bg-white/4 px-3 py-2">Trash, not permanent delete</span>
           </div>
 
-          {email ? <SecondaryActions email={email} ready={readyShell} /> : null}
-
-          <div className="flex flex-wrap gap-4 text-sm text-slate-400">
-            <Link className="hover:text-white focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white" href="/privacy">
-              Privacy policy
-            </Link>
-            <Link className="hover:text-white focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white" href="/security">
-              Security
-            </Link>
-          </div>
+          {email ? <SecondaryActions email={email} /> : null}
 
           <AnimatePresence initial={false}>
             {readyShell && enteredReadyShell ? (

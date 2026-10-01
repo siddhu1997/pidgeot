@@ -373,6 +373,7 @@ export function DevelopmentLab({ initialStatus }) {
               <button
                 className={classNames(
                   "rounded-full border px-4 py-2 text-sm font-semibold transition-colors duration-200",
+                  modeRequestState !== "idle" ? "is-waiting" : null,
                   (status?.unsubscribeMode || "simulation") === "simulation"
                     ? "border-cyan-300/36 bg-cyan-300/16 text-cyan-100"
                     : "border-white/12 bg-white/4 text-slate-200 hover:border-white/24",
@@ -386,6 +387,7 @@ export function DevelopmentLab({ initialStatus }) {
               <button
                 className={classNames(
                   "rounded-full border px-4 py-2 text-sm font-semibold transition-colors duration-200",
+                  modeRequestState !== "idle" ? "is-waiting" : null,
                   status?.unsubscribeMode === "real"
                     ? "border-amber-300/36 bg-amber-300/14 text-[#fbe9b2]"
                     : "border-white/12 bg-white/4 text-slate-200 hover:border-white/24",
@@ -433,7 +435,10 @@ export function DevelopmentLab({ initialStatus }) {
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
             <button
-              className="rounded-full border border-amber-300/36 bg-amber-300/14 px-4 py-2 text-sm font-semibold text-[#fbe9b2] disabled:opacity-60"
+              className={classNames(
+                "rounded-full border border-amber-300/36 bg-amber-300/14 px-4 py-2 text-sm font-semibold text-[#fbe9b2] disabled:opacity-60",
+                scenarioRequestState !== "idle" ? "is-waiting" : null,
+              )}
               disabled={scenarioRequestState !== "idle"}
               onClick={() => handleWorkflowScenario("apply")}
               type="button"
@@ -441,7 +446,10 @@ export function DevelopmentLab({ initialStatus }) {
               Apply scenario
             </button>
             <button
-              className="rounded-full border border-white/12 bg-white/4 px-4 py-2 text-sm font-semibold text-slate-200 disabled:opacity-60"
+              className={classNames(
+                "rounded-full border border-white/12 bg-white/4 px-4 py-2 text-sm font-semibold text-slate-200 disabled:opacity-60",
+                scenarioRequestState !== "idle" ? "is-waiting" : null,
+              )}
               disabled={scenarioRequestState !== "idle"}
               onClick={() => handleWorkflowScenario("clear")}
               type="button"
@@ -449,7 +457,10 @@ export function DevelopmentLab({ initialStatus }) {
               Clear scenario
             </button>
             <button
-              className="rounded-full border border-white/12 bg-white/4 px-4 py-2 text-sm font-semibold text-slate-200 disabled:opacity-60"
+              className={classNames(
+                "rounded-full border border-white/12 bg-white/4 px-4 py-2 text-sm font-semibold text-slate-200 disabled:opacity-60",
+                scenarioRequestState !== "idle" ? "is-waiting" : null,
+              )}
               disabled={scenarioRequestState !== "idle"}
               onClick={() => handleWorkflowScenario("reset")}
               type="button"
@@ -633,7 +644,10 @@ export function DevelopmentLab({ initialStatus }) {
             <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">4. Generate & Send</p>
             <div className="mt-4 flex flex-wrap items-center gap-3">
               <button
-                className="rounded-2xl bg-[#f4c95d] px-5 py-3 text-sm font-semibold text-slate-950 disabled:opacity-60"
+                className={classNames(
+                  "rounded-2xl bg-[#f4c95d] px-5 py-3 text-sm font-semibold text-slate-950 disabled:opacity-60",
+                  requestState !== "idle" ? "is-waiting" : null,
+                )}
                 disabled={requestState !== "idle"}
                 type="submit"
               >

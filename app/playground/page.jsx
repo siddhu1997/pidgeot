@@ -1,7 +1,6 @@
 import { notFound } from "next/navigation";
 
-import { DevelopmentLab } from "@/components/playground/development-lab";
-import { PlaygroundLab } from "@/components/playground/playground-lab";
+import { DevelopmentLabShell } from "@/components/playground/development-lab-shell";
 import { getServerAppConfig } from "@/lib/config";
 import { getDevLabPublicStatus } from "@/lib/dev-lab/config";
 
@@ -30,9 +29,6 @@ export default function PlaygroundPage() {
   }
 
   return (
-    <>
-      <DevelopmentLab initialStatus={getDevLabPublicStatus()} />
-      <PlaygroundLab />
-    </>
+    <DevelopmentLabShell initialStatus={getDevLabPublicStatus()} />
   );
 }

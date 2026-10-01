@@ -42,7 +42,7 @@ export function AuthStatusToast() {
 
     const timeoutId = window.setTimeout(() => {
       setNotification(null);
-    }, 4200);
+    }, 3000);
 
     return () => {
       window.clearTimeout(timeoutId);
@@ -54,7 +54,7 @@ export function AuthStatusToast() {
   }
 
   return (
-    <div className="pointer-events-none fixed right-5 top-5 z-50 flex max-w-sm justify-end sm:right-8 sm:top-8">
+    <div className="pointer-events-none fixed right-5 bottom-5 z-50 flex max-w-sm justify-end sm:right-8 sm:bottom-8">
       <div
         aria-live="polite"
         className={`auth-toast auth-toast--${notification.tone} pointer-events-auto rounded-[22px] px-4 py-3 shadow-[0_18px_50px_rgba(0,0,0,0.35)] motion-safe:animate-[card-rise_220ms_ease-out]`}

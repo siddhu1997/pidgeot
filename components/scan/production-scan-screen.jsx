@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from "motion/react";
@@ -206,8 +205,50 @@ const MANUAL_INSTRUCTION_RECOVERY = {
   title: "Manual unsubscribe needed",
 };
 
-function getWorkflowRecovery({ actionType = "unsubscribe", execution, scan } = {}) {
+const AUTOMATIC_FAILED_MANUAL_FALLBACK_RECOVERY = {
+  actionLabel: "View instructions",
+  actionType: "manual",
+  body: "The automatic unsubscribe request did not complete. A manual unsubscribe path is still available.",
+  kind: "manual",
+  retryActionType: null,
+  title: "Manual unsubscribe available",
+};
+
+const AUTOMATIC_FAILED_NO_FALLBACK_RECOVERY = {
+  actionLabel: null,
+  actionType: null,
+  body: "The automatic unsubscribe request did not complete. No manual unsubscribe path is available.",
+  kind: "failed_permanent",
+  retryActionType: null,
+  title: "Needs attention",
+};
+
+function isAutomaticExecutionFailureOutcome(outcome) {
+  return outcome === "failed"
+    || outcome === "failed_permanent"
+    || outcome === "unsafe"
+    || outcome === "manual";
+}
+
+function groupHasDiscoveredManualUnsubscribeOperations(group) {
+  return getGroupUnsubscribePath(group).manualCount > 0;
+}
+
+function groupAttemptedAutomaticUnsubscribe(group, execution) {
+  if (!hasExecutionStarted(execution)) {
+    return false;
+  }
+
+  const operationTypes = Array.isArray(execution?.execution?.operationResults)
+    ? execution.execution.operationResults.map((result) => result?.operationType)
+    : [];
+
+  return operationTypes.includes("RFC8058_ONE_CLICK") || getGroupUnsubscribePath(group).automaticCount > 0;
+}
+
+function getWorkflowRecovery({ actionType = "unsubscribe", execution, group = null, scan } = {}) {
   const outcome = getExecutionOutcome(execution);
+  const hasManualFallback = actionType === "unsubscribe" && groupHasDiscoveredManualUnsubscribeOperations(group);
 
   if (outcome === "reauth") {
     return {
@@ -243,6 +284,10 @@ function getWorkflowRecovery({ actionType = "unsubscribe", execution, scan } = {
   }
 
   if (outcome === "failed") {
+    if (hasManualFallback) {
+      return AUTOMATIC_FAILED_MANUAL_FALLBACK_RECOVERY;
+    }
+
     return {
       actionLabel: "Try again",
       actionType: "retry",
@@ -256,6 +301,14 @@ function getWorkflowRecovery({ actionType = "unsubscribe", execution, scan } = {
   }
 
   if (outcome === "failed_permanent") {
+    if (hasManualFallback) {
+      return AUTOMATIC_FAILED_MANUAL_FALLBACK_RECOVERY;
+    }
+
+    if (actionType === "unsubscribe") {
+      return AUTOMATIC_FAILED_NO_FALLBACK_RECOVERY;
+    }
+
     return {
       actionLabel: null,
       actionType: null,
@@ -278,6 +331,10 @@ function getWorkflowRecovery({ actionType = "unsubscribe", execution, scan } = {
   }
 
   if (outcome === "unsafe") {
+    if (hasManualFallback) {
+      return AUTOMATIC_FAILED_MANUAL_FALLBACK_RECOVERY;
+    }
+
     return {
       actionLabel: null,
       actionType: null,
@@ -289,7 +346,13 @@ function getWorkflowRecovery({ actionType = "unsubscribe", execution, scan } = {
   }
 
   if (outcome === "manual") {
-    return MANUAL_INSTRUCTION_RECOVERY;
+    if (hasManualFallback) {
+      return groupAttemptedAutomaticUnsubscribe(group, execution)
+        ? AUTOMATIC_FAILED_MANUAL_FALLBACK_RECOVERY
+        : MANUAL_INSTRUCTION_RECOVERY;
+    }
+
+    return AUTOMATIC_FAILED_NO_FALLBACK_RECOVERY;
   }
 
   return null;
@@ -394,6 +457,14 @@ function getUnsubscribeExecutionDescription(group, execution) {
   }
 
   if (outcome === "manual") {
+    if (groupAttemptedAutomaticUnsubscribe(group, execution) && !groupHasDiscoveredManualUnsubscribeOperations(group)) {
+      return "The automatic unsubscribe request did not complete. No manual unsubscribe path is available.";
+    }
+
+    if (groupAttemptedAutomaticUnsubscribe(group, execution)) {
+      return "The automatic unsubscribe request did not complete. A manual unsubscribe path is still available.";
+    }
+
     return "Pidgeot found the unsubscribe path. We'll walk you through it.";
   }
 
@@ -420,14 +491,26 @@ function getUnsubscribeExecutionDescription(group, execution) {
   }
 
   if (outcome === "failed") {
+    if (groupHasDiscoveredManualUnsubscribeOperations(group)) {
+      return "The automatic unsubscribe request did not complete. A manual unsubscribe path is still available.";
+    }
+
     return "The unsubscribe request did not complete. You can try again.";
   }
 
   if (outcome === "failed_permanent") {
-    return "This request did not complete and may not succeed if tried again.";
+    if (groupHasDiscoveredManualUnsubscribeOperations(group)) {
+      return "The automatic unsubscribe request did not complete. A manual unsubscribe path is still available.";
+    }
+
+    return "The automatic unsubscribe request did not complete. No manual unsubscribe path is available.";
   }
 
   if (outcome === "unsafe") {
+    if (groupHasDiscoveredManualUnsubscribeOperations(group)) {
+      return "The automatic unsubscribe request did not complete. A manual unsubscribe path is still available.";
+    }
+
     return "Pidgeot will not send this unsubscribe request automatically.";
   }
 
@@ -894,11 +977,11 @@ function getUnsubscribeSeverVisualState({ armed, execution, group }) {
   }
 
   if (outcome === "failed" || outcome === "failed_permanent") {
-    return "failed";
+    return groupHasDiscoveredManualUnsubscribeOperations(group) ? "manual" : "failed";
   }
 
   if (outcome === "unsafe") {
-    return "unsafe";
+    return groupHasDiscoveredManualUnsubscribeOperations(group) ? "manual" : "unsafe";
   }
 
   if (hasManualOnlyUnsubscribeAction(group)) {
@@ -908,7 +991,7 @@ function getUnsubscribeSeverVisualState({ armed, execution, group }) {
   return armed ? "armed" : null;
 }
 
-function getUnsubscribeSeverCopy(visualState) {
+function getUnsubscribeSeverCopy(visualState, { execution = null, group = null } = {}) {
   if (visualState === "queued") {
     return {
       badge: "Queued",
@@ -954,9 +1037,13 @@ function getUnsubscribeSeverCopy(visualState) {
   }
 
   if (visualState === "failed") {
+    const retryable = getExecutionOutcome(execution) === "failed";
+
     return {
       badge: "Needs attention",
-      body: "The unsubscribe request did not complete. You can try again.",
+      body: retryable
+        ? "The unsubscribe request did not complete. You can try again."
+        : "The automatic unsubscribe request did not complete. No manual unsubscribe path is available.",
       headline: "Unsubscribe needs attention",
       tone: "border-rose-300/20 bg-rose-300/10",
       toneAccent: "text-rose-100",
@@ -1020,10 +1107,14 @@ function getUnsubscribeSeverCopy(visualState) {
   }
 
   if (visualState === "manual") {
+    const automaticFailed = groupAttemptedAutomaticUnsubscribe(group, execution);
+
     return {
       badge: "Manual",
-      body: "Pidgeot found the unsubscribe path. We'll walk you through it.",
-      headline: "Manual unsubscribe needed",
+      body: automaticFailed
+        ? "The automatic unsubscribe request did not complete. A manual unsubscribe path is still available."
+        : "Pidgeot found the unsubscribe path. We'll walk you through it.",
+      headline: automaticFailed ? "Manual unsubscribe available" : "Manual unsubscribe needed",
       tone: "border-white/10 bg-white/5",
       toneAccent: "text-slate-100",
       toneLine: "text-slate-300",
@@ -1178,10 +1269,25 @@ function shouldRenderSenderRecoveryAction(recovery) {
   return Boolean(recovery?.actionLabel && !SESSION_RECOVERY_KINDS.has(recovery.kind));
 }
 
-function RecoveryActionButton({ disabled, label, onClick }) {
+function isRecoveryControlBusy(recovery, { actionLocked = false, scanRequestWaiting = false } = {}) {
+  if (recovery?.actionType === "retry") {
+    return actionLocked;
+  }
+
+  if (recovery?.actionType === "resume" || recovery?.actionType === "gmail-upgrade") {
+    return scanRequestWaiting;
+  }
+
+  return false;
+}
+
+function RecoveryActionButton({ disabled, label, onClick, waiting = false }) {
   return (
     <button
-      className="rounded-full border border-white/16 bg-white/6 px-3 py-1.5 text-xs font-semibold text-white transition-colors duration-200 hover:border-white/28 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+      className={classNames(
+        "rounded-full border border-white/16 bg-white/6 px-3 py-1.5 text-xs font-semibold text-white transition-colors duration-200 hover:border-white/28 hover:bg-white/10 disabled:opacity-50",
+        waiting ? "is-waiting" : "disabled:cursor-not-allowed",
+      )}
       disabled={disabled}
       onClick={(event) => {
         stopNestedCardEvent(event);
@@ -1195,12 +1301,14 @@ function RecoveryActionButton({ disabled, label, onClick }) {
 }
 
 function UnsubscribeSeverSurface({
+  actionLocked = false,
   armed,
   execution,
   group,
   onRecoveryAction,
   recovery = null,
   reducedMotion,
+  scanRequestWaiting = false,
 }) {
   const visualState = getUnsubscribeSeverVisualState({ armed, execution, group });
 
@@ -1208,7 +1316,7 @@ function UnsubscribeSeverSurface({
     return null;
   }
 
-  const copy = getUnsubscribeSeverCopy(visualState);
+  const copy = getUnsubscribeSeverCopy(visualState, { execution, group });
   const broken = visualState === "processing" || visualState === "completed" || visualState === "partial";
   const restoring = visualState === "failed"
     || visualState === "paused"
@@ -1336,8 +1444,10 @@ function UnsubscribeSeverSurface({
         {shouldRenderSenderRecoveryAction(recovery) && typeof onRecoveryAction === "function" ? (
           <div className="mt-3">
             <RecoveryActionButton
+              disabled={isRecoveryControlBusy(recovery, { actionLocked, scanRequestWaiting })}
               label={recovery.actionLabel}
               onClick={() => onRecoveryAction(recovery)}
+              waiting={isRecoveryControlBusy(recovery, { actionLocked, scanRequestWaiting })}
             />
           </div>
         ) : null}
@@ -1397,7 +1507,13 @@ function hasResolvedAutomaticUnsubscribe(group) {
 }
 
 function hasAutomaticUnsubscribeResolvedToManual(group) {
-  return getExecutionOutcome(group?.workflow?.unsubscribeExecution) === "manual";
+  const outcome = getExecutionOutcome(group?.workflow?.unsubscribeExecution);
+  return isAutomaticExecutionFailureOutcome(outcome) && groupHasDiscoveredManualUnsubscribeOperations(group);
+}
+
+function hasAutomaticUnsubscribeFailedWithoutFallback(group) {
+  const outcome = getExecutionOutcome(group?.workflow?.unsubscribeExecution);
+  return isAutomaticExecutionFailureOutcome(outcome) && !groupHasDiscoveredManualUnsubscribeOperations(group);
 }
 
 function getGroupUnsubscribeAvailability(group) {
@@ -1411,15 +1527,43 @@ function getGroupUnsubscribeAvailability(group) {
   }
 
   const discoveredPath = getGroupUnsubscribePath(group);
+  const outcome = getExecutionOutcome(group?.workflow?.unsubscribeExecution);
 
-  if (hasAutomaticUnsubscribeResolvedToManual(group)) {
-    const manualCount = Math.max(discoveredPath.manualCount, 1);
-
+  if (outcome === "partial" && discoveredPath.manualCount > 0) {
     return {
       available: true,
       automaticCount: 0,
       executable: false,
-      manualCount,
+      manualCount: discoveredPath.manualCount,
+    };
+  }
+
+  if (hasAutomaticUnsubscribeResolvedToManual(group)) {
+    return {
+      available: true,
+      automaticCount: 0,
+      executable: false,
+      manualCount: discoveredPath.manualCount,
+    };
+  }
+
+  if (hasAutomaticUnsubscribeFailedWithoutFallback(group)) {
+    const retryable = getExecutionOutcome(group?.workflow?.unsubscribeExecution) === "failed";
+
+    if (retryable) {
+      return {
+        available: true,
+        automaticCount: discoveredPath.automaticCount,
+        executable: discoveredPath.executable,
+        manualCount: 0,
+      };
+    }
+
+    return {
+      available: false,
+      automaticCount: 0,
+      executable: false,
+      manualCount: 0,
     };
   }
 
@@ -1620,11 +1764,12 @@ function stopNestedCardEvent(event) {
   event.stopPropagation();
 }
 
-function ManualCountButton({ count, disabled, onClick }) {
+function ManualCountButton({ count, disabled, onClick, waiting = false }) {
   return (
     <button
       className={classNames(
         "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium transition-colors duration-200",
+        waiting ? "is-waiting" : null,
         disabled
           ? "cursor-not-allowed border-white/8 bg-black/18 text-slate-500"
           : "border-cyan-300/20 bg-cyan-300/10 text-cyan-100 hover:border-cyan-300/36 hover:bg-cyan-300/14",
@@ -1654,6 +1799,7 @@ function SelectionSummaryRow({ action, manualDisabled = false, onOpenManualDetai
               count={action.manualGroupCount}
               disabled={manualDisabled}
               onClick={onOpenManualDetails}
+              waiting={manualDisabled}
             />
           ) : null}
           {!action.enabled && action.manualGroupCount === 0 ? <span>Unavailable for this selection.</span> : null}
@@ -1665,29 +1811,33 @@ function SelectionSummaryRow({ action, manualDisabled = false, onOpenManualDetai
   );
 }
 
-function toolbarControlClassName(disabled = false) {
+function toolbarControlClassName(disabled = false, waiting = false) {
   return classNames(
     "h-12 rounded-2xl border px-4 text-sm font-semibold transition-colors duration-200",
+    waiting ? "is-waiting" : null,
     disabled
       ? "cursor-not-allowed border-white/8 bg-black/18 text-slate-500"
       : "border-white/12 bg-[rgba(7,11,19,0.92)] text-white hover:border-white/24 hover:bg-white/8",
   );
 }
 
-function BulkSelectionControls({ allVisibleSelected, disabled, onClearAll, onSelectAll, selectedCount, visibleSelectableCount }) {
+function BulkSelectionControls({ allVisibleSelected, disabled, onClearAll, onSelectAll, selectedCount, visibleSelectableCount, waiting = false }) {
+  const selectAllDisabled = disabled || visibleSelectableCount === 0 || allVisibleSelected;
+  const clearAllDisabled = disabled || selectedCount === 0;
+
   return (
     <div className="flex flex-wrap items-center gap-3">
       <button
-        className={toolbarControlClassName(disabled || visibleSelectableCount === 0 || allVisibleSelected)}
-        disabled={disabled || visibleSelectableCount === 0 || allVisibleSelected}
+        className={toolbarControlClassName(selectAllDisabled, waiting && selectAllDisabled)}
+        disabled={selectAllDisabled}
         onClick={onSelectAll}
         type="button"
       >
         Select all
       </button>
       <button
-        className={toolbarControlClassName(disabled || selectedCount === 0)}
-        disabled={disabled || selectedCount === 0}
+        className={toolbarControlClassName(clearAllDisabled, waiting && clearAllDisabled)}
+        disabled={clearAllDisabled}
         onClick={onClearAll}
         type="button"
       >
@@ -2002,6 +2152,7 @@ function ManualUnsubscribeInfoCard({ disabled, emphasized = false, label, onOpen
       <button
         className={classNames(
           "relative mt-2 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors duration-200",
+          disabled ? "is-waiting" : null,
           disabled
             ? "cursor-not-allowed border-white/8 bg-black/18 text-slate-500"
             : "border-white/16 bg-white/6 text-white hover:border-white/28 hover:bg-white/10",
@@ -2054,11 +2205,13 @@ function buildSelectionRecovery({ groups, scan }) {
       getWorkflowRecovery({
         actionType: "unsubscribe",
         execution: getWorkflowActionExecution(group, "unsubscribe"),
+        group,
         scan,
       }),
       getWorkflowRecovery({
         actionType: "cleanup",
         execution: getWorkflowActionExecution(group, "cleanup"),
+        group,
         scan,
       }),
     ]))
@@ -2080,6 +2233,7 @@ function selectionHasRetryableDecision(groups, actionType) {
     const recovery = getWorkflowRecovery({
       actionType,
       execution: getWorkflowActionExecution(group, actionType),
+      group,
     });
 
     if (recovery?.kind !== "failed") {
@@ -2094,7 +2248,7 @@ function selectionHasRetryableDecision(groups, actionType) {
   });
 }
 
-function SelectionActionButton({ active, description, disabled, emphasized = false, label, onClick, reducedMotion }) {
+function SelectionActionButton({ active, description, disabled, emphasized = false, label, onClick, reducedMotion, waiting = false }) {
   const showEmphasis = emphasized && !disabled;
 
   return (
@@ -2102,6 +2256,7 @@ function SelectionActionButton({ active, description, disabled, emphasized = fal
       aria-pressed={active}
       className={classNames(
         "relative isolate flex min-h-[72px] min-w-[220px] flex-1 flex-col items-start justify-center overflow-hidden rounded-[22px] border px-4 py-3 text-left transition-[background-color,border-color,box-shadow,transform] duration-200",
+        waiting ? "is-waiting" : null,
         disabled
           ? "cursor-not-allowed border-white/8 bg-black/20 text-slate-500"
           : active
@@ -2150,6 +2305,7 @@ function SelectionActionBar({
   recovery = null,
   reducedMotion,
   retryable = false,
+  scanRequestWaiting = false,
   selectedCount,
 }) {
   const selectionLabel = formatQuantity(selectedCount, "sender");
@@ -2195,6 +2351,7 @@ function SelectionActionBar({
           {actionSummary.unsubscribe.enabled ? (
             <SelectionSummaryRow
               action={actionSummary.unsubscribe}
+              manualDisabled={actionLocked}
               onOpenManualDetails={onOpenManualDetails}
             />
           ) : null}
@@ -2222,6 +2379,7 @@ function SelectionActionBar({
             label={actionSummary.unsubscribe.label}
             onClick={() => onDecisionChange(activeDecision === "unsubscribe" ? null : "unsubscribe")}
             reducedMotion={reducedMotion}
+            waiting={actionLocked}
           />
         )}
         <SelectionActionButton
@@ -2232,6 +2390,7 @@ function SelectionActionBar({
           label={actionSummary.cleanup.label}
           onClick={() => onDecisionChange(activeDecision === "cleanup" ? null : "cleanup")}
           reducedMotion={reducedMotion}
+          waiting={actionLocked}
         />
       </div>
 
@@ -2257,6 +2416,7 @@ function SelectionActionBar({
             <button
               className={classNames(
                 "inline-flex min-h-11 shrink-0 items-center rounded-2xl border px-4 py-2.5 text-sm font-semibold transition-colors duration-200 disabled:cursor-not-allowed disabled:opacity-60",
+                actionLocked ? "is-waiting" : null,
                 actionSummary.unsubscribe.manualGroupCount >= 2
                   ? "border-cyan-300/24 bg-cyan-300/10 text-cyan-100 hover:border-cyan-300/36 hover:bg-cyan-300/16"
                   : "border-white/16 bg-white/6 text-white hover:border-white/28 hover:bg-white/10",
@@ -2272,7 +2432,11 @@ function SelectionActionBar({
           ) : null}
           {recovery?.actionLabel && recovery.actionType !== "manual" && typeof onRecoveryAction === "function" ? (
             <button
-              className="inline-flex min-h-11 shrink-0 items-center rounded-2xl border border-white/16 bg-white/6 px-4 py-2.5 text-sm font-semibold text-white transition-colors duration-200 hover:border-white/28 hover:bg-white/10"
+              className={classNames(
+                "inline-flex min-h-11 shrink-0 items-center rounded-2xl border border-white/16 bg-white/6 px-4 py-2.5 text-sm font-semibold text-white transition-colors duration-200 hover:border-white/28 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60",
+                isRecoveryControlBusy(recovery, { actionLocked, scanRequestWaiting }) ? "is-waiting" : null,
+              )}
+              disabled={isRecoveryControlBusy(recovery, { actionLocked, scanRequestWaiting })}
               onClick={() => onRecoveryAction(recovery)}
               type="button"
             >
@@ -2284,6 +2448,7 @@ function SelectionActionBar({
               <motion.button
                 className={classNames(
                   "inline-flex min-h-11 shrink-0 items-center rounded-2xl border px-4 py-2.5 text-sm font-semibold transition-[background-color,border-color,transform] duration-200",
+                  actionLocked ? "is-waiting" : null,
                   executeDisabled
                     ? "cursor-not-allowed border border-white/10 bg-white/6 text-slate-500"
                     : "border-[#f4c95d]/40 bg-[#f4c95d] text-slate-950 shadow-[0_12px_26px_rgba(0,0,0,0.22)] hover:border-[#f7d77d] hover:bg-[#f7d77d]",
@@ -2341,7 +2506,7 @@ function getActionButtonLabel({ actionLabel, pausing, requestState }) {
 const FIRST_SCAN_INBOX_BUTTON_CLASSNAME = "relative z-10 rounded-2xl bg-cyan-300 px-5 py-3 text-sm font-semibold text-slate-950 shadow-[0_12px_26px_rgba(0,0,0,0.18)] transition-transform duration-200 hover:-translate-y-0.5 disabled:translate-y-0 disabled:opacity-80";
 const FIRST_SCAN_SONAR_CYCLE_SECONDS = 2.35;
 
-function FirstScanInboxButton({ disabled, label, onClick, reducedMotion }) {
+function FirstScanInboxButton({ disabled, label, onClick, reducedMotion, waiting = false }) {
   const [pulseStopped, setPulseStopped] = useState(false);
   const idlePulse = !reducedMotion && !disabled && !pulseStopped;
 
@@ -2371,7 +2536,7 @@ function FirstScanInboxButton({ disabled, label, onClick, reducedMotion }) {
         animate={idlePulse
           ? { scale: [1, 1.016, 1, 1] }
           : { scale: 1 }}
-        className={FIRST_SCAN_INBOX_BUTTON_CLASSNAME}
+        className={classNames(FIRST_SCAN_INBOX_BUTTON_CLASSNAME, waiting ? "is-waiting" : null)}
         disabled={disabled}
         onClick={() => {
           stopIdlePulse();
@@ -2444,6 +2609,7 @@ function CompactScanSummary({
   scanAgainLabel,
   scanState,
   senderGroupCount,
+  waiting = false,
 }) {
   const developmentLimit = resourceLimit?.code === "DEVELOPMENT_MESSAGE_LIMIT";
   const complete = scanState === SCAN_STATES.COMPLETE;
@@ -2500,6 +2666,7 @@ function CompactScanSummary({
           <button
             className={classNames(
               "rounded-2xl px-5 py-3 text-sm font-semibold shadow-[0_12px_26px_rgba(0,0,0,0.18)] transition-transform duration-200 hover:-translate-y-0.5 disabled:translate-y-0 disabled:opacity-80",
+              waiting ? "is-waiting" : null,
               developmentLimit ? "bg-[#f4c95d] text-slate-950" : "bg-emerald-300 text-slate-950",
             )}
             disabled={disabled}
@@ -2782,13 +2949,16 @@ function ScanRitualSurface({ mode, reducedMotion, scan, senderGroups }) {
 }
 
 function SenderGroupCard({
+  actionLocked = false,
   armedActionType = null,
   group,
   mode = "active",
   onRecoveryAction,
   reducedMotion,
   scan = null,
+  scanRequestWaiting = false,
   selected,
+  selectionLocked = false,
   onToggle,
 }) {
   const title = getGroupTitle(group);
@@ -2805,11 +2975,13 @@ function SenderGroupCard({
   const unsubscribeRecovery = getWorkflowRecovery({
     actionType: "unsubscribe",
     execution: unsubscribeExecution,
+    group,
     scan,
   }) || (hasManualOnlyUnsubscribeAction(group) ? MANUAL_INSTRUCTION_RECOVERY : null);
   const cleanupRecovery = getWorkflowRecovery({
     actionType: "cleanup",
     execution: cleanupExecution,
+    group,
     scan,
   });
   const showUnsubscribeSeverSurface = !done && shouldShowUnsubscribeSeverSurface({
@@ -2839,7 +3011,7 @@ function SenderGroupCard({
   return (
     <motion.div
       layout
-      aria-disabled={!interactive}
+      aria-disabled={!interactive || selectionLocked}
       aria-pressed={interactive ? selected : undefined}
       className={classNames(
         "h-full min-h-[272px] w-full rounded-[26px] border bg-[rgba(8,14,25,0.86)] p-4 text-left shadow-[0_16px_34px_rgba(0,0,0,0.16)] transition-colors",
@@ -2852,18 +3024,18 @@ function SenderGroupCard({
             : sensitiveFinancial
               ? "border-amber-300/16 bg-[rgba(18,15,10,0.78)]"
               : "border-white/6 bg-[rgba(8,14,25,0.68)]",
-        interactive ? "cursor-pointer" : "cursor-default",
+        interactive ? (selectionLocked ? "is-waiting cursor-wait" : "cursor-pointer") : "cursor-default",
       )}
-      onClick={interactive ? onToggle : undefined}
-      onKeyDown={interactive ? (event) => {
+      onClick={interactive && !selectionLocked ? onToggle : undefined}
+      onKeyDown={interactive && !selectionLocked ? (event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           onToggle();
         }
       } : undefined}
       role={interactive ? "button" : undefined}
-      tabIndex={interactive ? 0 : -1}
-      whileTap={reducedMotion ? undefined : { scale: 0.99 }}
+      tabIndex={interactive && !selectionLocked ? 0 : -1}
+      whileTap={reducedMotion || selectionLocked ? undefined : { scale: 0.99 }}
     >
       <div className="flex h-full flex-col">
         <div className="flex items-start justify-between gap-3">
@@ -2947,12 +3119,14 @@ function SenderGroupCard({
 
         {showUnsubscribeSeverSurface ? (
           <UnsubscribeSeverSurface
+            actionLocked={actionLocked}
             armed={armedActionType === "unsubscribe" && !hasExecutionStarted(unsubscribeExecution)}
             execution={unsubscribeExecution}
             group={group}
             onRecoveryAction={onRecoveryAction ? (recovery) => onRecoveryAction(recovery, group) : undefined}
             recovery={unsubscribeRecovery}
             reducedMotion={reducedMotion}
+            scanRequestWaiting={scanRequestWaiting}
           />
         ) : null}
 
@@ -2985,8 +3159,10 @@ function SenderGroupCard({
                   return (
                     <div className="mt-2">
                       <RecoveryActionButton
+                        disabled={isRecoveryControlBusy(recovery, { actionLocked, scanRequestWaiting })}
                         label={recovery.actionLabel}
                         onClick={() => onRecoveryAction(recovery, group)}
+                        waiting={isRecoveryControlBusy(recovery, { actionLocked, scanRequestWaiting })}
                       />
                     </div>
                   );
@@ -3040,6 +3216,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   const [scan, setScan] = useState(initialScan);
   const [errorMessage, setErrorMessage] = useState(null);
   const [requestState, setRequestState] = useState("idle");
+  const [statusRefreshState, setStatusRefreshState] = useState("idle");
   const [executionRequestState, setExecutionRequestState] = useState("idle");
   const [selectedIds, setSelectedIds] = useState([]);
   const [selectionDecision, setSelectionDecision] = useState(null);
@@ -3213,6 +3390,10 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   const primaryActionDisabled = !effectivePresentation.actionType || pausing || (
     requestState !== "idle" && !(requestState === "auto-resume" && effectivePresentation.actionType === "pause")
   );
+  const scanRequestWaiting = pausing || (
+    requestState !== "idle" && !(requestState === "auto-resume" && effectivePresentation.actionType === "pause")
+  );
+  const actionLocked = executionRequestState !== "idle" || hasSelectedRunningExecution;
   const scanRestarting = requestState === "start";
   const postScanCompactEligible = isPostScanCompactEligible(scan) && !pausing && !activeScan && !scanRestarting;
   const showCompactScanSummary = postScanCompactEligible && !scanDetailsExpanded;
@@ -3363,7 +3544,12 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
   }, [activeScan, autoAdvance, developmentScenarioActive, requestState]);
 
   async function refreshStatus() {
+    if (requestState !== "idle" || statusRefreshState !== "idle") {
+      return;
+    }
+
     try {
+      setStatusRefreshState("refresh");
       const payload = await readJson("/api/scan/status");
       setScan(payload.scan);
 
@@ -3380,6 +3566,8 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
       setErrorMessage(null);
     } catch (error) {
       setErrorMessage(error.message || "The latest scan status could not be loaded.");
+    } finally {
+      setStatusRefreshState("idle");
     }
   }
 
@@ -3739,8 +3927,6 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
         </p>
         <div className="mt-6 flex flex-wrap gap-3">
           <a className="rounded-full bg-[#f4c95d] px-5 py-3 text-sm font-semibold text-slate-950" href="/api/auth/google/start">Continue with Google</a>
-          <Link className="rounded-full border border-white/12 bg-white/4 px-5 py-3 text-sm font-semibold text-white" href="/privacy">Privacy policy</Link>
-          <Link className="rounded-full border border-white/12 bg-white/4 px-5 py-3 text-sm font-semibold text-white" href="/security">Security</Link>
         </div>
       </section>
     );
@@ -3787,6 +3973,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
             })}
             scanState={scan?.state}
             senderGroupCount={senderGroups.length}
+            waiting={scanRequestWaiting}
           />
           <AnimatePresence initial={false}>
             {errorMessage ? (
@@ -3885,11 +4072,13 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
                     })}
                     onClick={() => handleScanAction(effectivePresentation.actionType)}
                     reducedMotion={reducedMotion}
+                    waiting={scanRequestWaiting}
                   />
                 ) : (
                   <button
                     className={classNames(
                       "rounded-2xl px-5 py-3 text-sm font-semibold shadow-[0_12px_26px_rgba(0,0,0,0.18)] transition-transform duration-200 hover:-translate-y-0.5 disabled:translate-y-0 disabled:opacity-80",
+                      scanRequestWaiting ? "is-waiting" : null,
                       effectivePresentation.accent === "yellow"
                         ? "bg-[#f4c95d] text-slate-950"
                         : effectivePresentation.accent === "emerald"
@@ -3911,14 +4100,16 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
             </div>
             <div className="flex flex-wrap items-center justify-end gap-3">
               <button
-                className="rounded-2xl border border-white/12 bg-white/4 px-5 py-3 text-sm font-semibold text-white transition-colors duration-200 hover:border-white/24 hover:bg-white/8 disabled:opacity-80"
-                disabled={requestState !== "idle"}
+                className={classNames(
+                  "rounded-2xl border border-white/12 bg-white/4 px-5 py-3 text-sm font-semibold text-white transition-colors duration-200 hover:border-white/24 hover:bg-white/8 disabled:opacity-80",
+                  requestState !== "idle" || statusRefreshState !== "idle" ? "is-waiting" : null,
+                )}
+                disabled={requestState !== "idle" || statusRefreshState !== "idle"}
                 onClick={refreshStatus}
                 type="button"
               >
                 Refresh status
               </button>
-              <Link className="rounded-2xl border border-white/12 bg-white/4 px-5 py-3 text-sm font-semibold text-white transition-colors duration-200 hover:border-white/24 hover:bg-white/8" href="/privacy">Privacy policy</Link>
               {postScanCompactEligible ? (
                 <button
                   className="rounded-2xl border border-white/12 bg-white/4 px-5 py-3 text-sm font-semibold text-white transition-colors duration-200 hover:border-white/24 hover:bg-white/8"
@@ -4003,6 +4194,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
               recovery={selectionRecovery}
               reducedMotion={reducedMotion}
               retryable={selectionRetryable}
+              scanRequestWaiting={scanRequestWaiting}
               selectedCount={selectedCount}
             />
           ) : null}
@@ -4049,6 +4241,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
                   onSelectAll={selectAllVisibleActionable}
                   selectedCount={selectedCount}
                   visibleSelectableCount={visibleActionableGroupIds.length}
+                  waiting={hasSelectedRunningExecution}
                 />
               </div>
             </div>
@@ -4107,6 +4300,7 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
                     transition={{ duration: reducedMotion ? 0 : 0.22 }}
                   >
                     <SenderGroupCard
+                      actionLocked={actionLocked}
                       armedActionType={selectedGroupIdSet.has(group.id) ? activeSelectionDecision : null}
                       group={group}
                       mode={visibleResultTab === "done" ? "done" : "active"}
@@ -4114,7 +4308,9 @@ export function ProductionScanScreen({ authConfigured, autoAdvance = true, email
                       onToggle={() => toggleSelection(group.id)}
                       reducedMotion={reducedMotion}
                       scan={scan}
+                      scanRequestWaiting={scanRequestWaiting}
                       selected={selectedGroupIdSet.has(group.id)}
+                      selectionLocked={hasSelectedRunningExecution}
                     />
                   </motion.div>
                 ))}
